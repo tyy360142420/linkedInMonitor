@@ -1,7 +1,9 @@
 import os
 from dotenv import load_dotenv
+from paths import APP_DIR
 
-load_dotenv()
+# 从 .exe / 脚本所在目录读取 .env
+load_dotenv(os.path.join(APP_DIR, ".env"))
 
 LINKEDIN_EMAIL: str = os.getenv("LINKEDIN_EMAIL", "")
 LINKEDIN_PASSWORD: str = os.getenv("LINKEDIN_PASSWORD", "")
@@ -16,7 +18,10 @@ HEADLESS: bool = os.getenv("HEADLESS", "false").strip().lower() == "true"
 SECURITY_CHALLENGE_WAIT_MINUTES: int = int(
     os.getenv("SECURITY_CHALLENGE_WAIT_MINUTES", "8")
 )
-SESSION_PROFILE_DIR: str = os.getenv("SESSION_PROFILE_DIR", ".edge_profile")
+SESSION_PROFILE_DIR: str = os.getenv(
+    "SESSION_PROFILE_DIR",
+    os.path.join(APP_DIR, ".edge_profile"),
+)
 
 
 def validate() -> None:

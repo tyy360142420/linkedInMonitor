@@ -16,6 +16,7 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     NoSuchWindowException,
     TimeoutException,
+    WebDriverException,
 )
 from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options as EdgeOptions
@@ -82,6 +83,7 @@ class LinkedInScraper:
         self.session_profile_dir = session_profile_dir
         self._driver: Optional[Any] = None
         self._wait: Optional[WebDriverWait] = None
+        self._primary_window_handle: Optional[str] = None
 
     # ------------------------------------------------------------------ #
     # Context manager
@@ -103,7 +105,7 @@ class LinkedInScraper:
         logger.info("正在登录 LinkedIn …")
         for attempt in (1, 2):
             try:
-                self._driver.get(self._LOGIN_URL)
+                self._navigate(self._LOGIN_URL)
                 time.sleep(2)
 
                 if self._is_logged_in_url(self._driver.current_url):
@@ -153,6 +155,13 @@ class LinkedInScraper:
             except TimeoutException:
                 logger.error("登录超时，请检查网络或账号信息")
                 return False
+            except WebDriverException as exc:
+                if self._is_detached_frame_error(exc) and attempt == 1:
+                    logger.warning("登录页标签失去连接，正在恢复浏览器后重试一次")
+                    self._recover_primary_window()
+                    continue
+                logger.error("登录过程发生浏览器错误: %s", exc, exc_info=True)
+                return False
             except Exception as exc:
                 logger.error("登录过程发生意外错误: %s", exc, exc_info=True)
                 return False
@@ -169,7 +178,7 @@ class LinkedInScraper:
         logger.info("访问用户动态页: %s", activity_url)
 
         try:
-            self._driver.get(activity_url)
+            self._navigate(activity_url)
             time.sleep(4)
 
             # 滚动触发懒加载
@@ -204,8 +213,16 @@ class LinkedInScraper:
             options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-session-crashed-bubble")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--lang=zh-CN")
+        # 禁用 GPU 硬件加速，防止 AMD/GPU 驱动错误导致渲染进程崩溃断连
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-gpu-compositing")
+        options.add_argument("--disable-software-rasterizer")
+        options.add_argument("--disable-features=VizDisplayCompositor")
 
         edge_binary = self._detect_edge_binary()
         if edge_binary:
@@ -218,11 +235,73 @@ class LinkedInScraper:
 
         self._driver = webdriver.Edge(options=options)
         self._wait = WebDriverWait(self._driver, 15)
+        self._prepare_primary_window()
         logger.info(
             "Edge 浏览器已启动（无头模式: %s，会话目录: %s）",
             self.headless,
             profile_path,
         )
+
+    def _prepare_primary_window(self) -> None:
+        """创建一个专用标签页，并关闭恢复出的无关页面。"""
+        current_handles = self._driver.window_handles
+        if not current_handles:
+            raise RuntimeError("Edge 未创建可用窗口")
+
+        self._driver.switch_to.new_window("tab")
+        self._driver.get("about:blank")
+        self._primary_window_handle = self._driver.current_window_handle
+        self._close_extra_windows(self._primary_window_handle)
+
+    def _close_extra_windows(self, keep_handle: str) -> None:
+        for handle in list(self._driver.window_handles):
+            if handle == keep_handle:
+                continue
+            try:
+                self._driver.switch_to.window(handle)
+                self._driver.close()
+            except Exception:
+                continue
+        self._driver.switch_to.window(keep_handle)
+
+    def _ensure_primary_window(self) -> None:
+        handles = self._driver.window_handles
+        if not handles:
+            raise NoSuchWindowException("没有可用浏览器窗口")
+
+        if self._primary_window_handle in handles:
+            self._driver.switch_to.window(self._primary_window_handle)
+            return
+
+        self._primary_window_handle = handles[-1]
+        self._driver.switch_to.window(self._primary_window_handle)
+
+    def _recover_primary_window(self) -> None:
+        self._ensure_primary_window()
+        try:
+            self._driver.switch_to.new_window("tab")
+            self._driver.get("about:blank")
+            self._primary_window_handle = self._driver.current_window_handle
+            self._close_extra_windows(self._primary_window_handle)
+        except Exception:
+            self._ensure_primary_window()
+
+    def _navigate(self, url: str) -> None:
+        for attempt in (1, 2):
+            try:
+                self._ensure_primary_window()
+                self._driver.get(url)
+                return
+            except WebDriverException as exc:
+                if self._is_detached_frame_error(exc) and attempt == 1:
+                    logger.warning("检测到标签页上下文丢失，正在恢复并重试: %s", url)
+                    self._recover_primary_window()
+                    continue
+                raise
+
+    @staticmethod
+    def _is_detached_frame_error(exc: Exception) -> bool:
+        return "target frame detached" in str(exc).lower()
 
     def _wait_for_challenge_resolution(self) -> bool:
         """检测到安全挑战后，等待用户手动完成验证。"""

@@ -8,9 +8,11 @@ import os
 import logging
 from typing import Set
 
+from paths import APP_DIR
+
 logger = logging.getLogger(__name__)
 
-_STORAGE_FILE = "seen_posts.json"
+_STORAGE_FILE = os.path.join(APP_DIR, "seen_posts.json")
 
 
 def load_seen_posts() -> Set[str]:
