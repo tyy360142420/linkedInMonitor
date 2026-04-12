@@ -114,9 +114,18 @@ class LinkedInScraper:
 
                 wait = self._wait
 
-                email_field = wait.until(
-                    EC.presence_of_element_located((By.ID, "username"))
-                )
+                # 等待登录表单出现，或 LinkedIn 直接跳转到已登录页面
+                def _login_form_or_redirect(driver):
+                    if self._is_logged_in_url(driver.current_url):
+                        return "already_logged_in"
+                    els = driver.find_elements(By.ID, "username")
+                    return els[0] if els else False
+
+                result = wait.until(_login_form_or_redirect)
+                if result == "already_logged_in":
+                    logger.info("检测到已存在登录会话，跳过账号密码输入")
+                    return True
+                email_field = result
                 email_field.clear()
                 email_field.send_keys(self.email)
 
@@ -234,7 +243,7 @@ class LinkedInScraper:
         options.add_argument("--profile-directory=Default")
 
         self._driver = webdriver.Edge(options=options)
-        self._wait = WebDriverWait(self._driver, 15)
+        self._wait = WebDriverWait(self._driver, 30)
         self._prepare_primary_window()
         logger.info(
             "Edge 浏览器已启动（无头模式: %s，会话目录: %s）",

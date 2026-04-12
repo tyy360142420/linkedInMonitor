@@ -1,0 +1,420 @@
+{% extends "base.html" %}
+{% block title %}{{ publisher.name }} — 发布人详情{% endblock %}
+
+{% block content %}
+
+<!-- 发布人头部 -->
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex align-items-center gap-4">
+      <div class="platform-icon platform-icon--{{ publisher.platform }} platform-icon--lg">
+        <i class="bi bi-{{ 'linkedin' if publisher.platform == 'linkedin' else 'twitter-x' }} fs-2"></i>
+      </div>
+      <div class="flex-grow-1">
+        <h4 class="mb-1 fw-bold">{{ publisher.name }}</h4>
+        <div class="text-muted mb-2">
+          {% if publisher.platform == 'twitter' %}@{% endif %}{{ publisher.handle }}
+          &nbsp;·&nbsp;
+          <span class="badge bg-{{ 'linkedin-badge' if publisher.platform == 'linkedin' else 'twitter-badge' }}">
+            {{ publisher.platform | title }}
+          </span>
+        </div>
+        {% if publisher.profile_url %}
+        <a href="{{ publisher.profile_url }}" target="_blank" rel="noopener"
+           class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-box-arrow-up-right me-1"></i>访问主页
+        </a>
+        {% endif %}
+      </div>
+      <div class="text-end">
+        <div class="text-muted small mb-1">加入时间</div>
+        <div class="small">{{ publisher.created_at }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 推荐表现统计 -->
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <i class="bi bi-bar-chart-line text-success"></i>
+      <div class="fw-semibold">推荐后表现统计（按首次提及日至今）</div>
+    </div>
+    <div class="row g-3 text-center">
+      <div class="col-12 col-md-4">
+        <div class="bg-light rounded py-2">
+          <div class="fw-bold fs-5">{{ perf_summary.total_recommended }}</div>
+          <div class="text-muted" style="font-size:.75rem">推荐股票总数</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="bg-light rounded py-2">
+          <div class="fw-bold fs-5 text-success">
+            {% if perf_summary.up_ratio is not none %}
+              {{ perf_summary.up_count }} / {{ perf_summary.total_recommended }} ({{ perf_summary.up_ratio }}%)
+            {% else %}
+              —
+            {% endif %}
+          </div>
+          <div class="text-muted" style="font-size:.75rem">上涨股票占比</div>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="bg-light rounded py-2">
+          <div class="fw-bold fs-5 {% if perf_summary.avg_change is not none and perf_summary.avg_change > 0 %}text-success{% elif perf_summary.avg_change is not none and perf_summary.avg_change < 0 %}text-danger{% else %}text-muted{% endif %}">
+            {% if perf_summary.avg_change is not none %}
+              {{ '+' if perf_summary.avg_change > 0 else '' }}{{ perf_summary.avg_change }}%
+            {% else %}
+              —
+            {% endif %}
+          </div>
+          <div class="text-muted" style="font-size:.75rem">平均涨跌幅</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab 导航 -->
+<ul class="nav nav-tabs mb-4" id="pubTabs">
+  <li class="nav-item">
+    <a class="nav-link active" data-bs-toggle="tab" href="#tab-posts">
+      <i class="bi bi-newspaper me-1"></i>帖子
+      <span class="badge bg-secondary ms-1">{{ posts | length }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-stocks">
+      <i class="bi bi-graph-up me-1"></i>股票 &amp; 走势
+      <span class="badge bg-success ms-1">{{ stocks | length }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-notes">
+      <i class="bi bi-journal-text me-1"></i>我的笔记
+    </a>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- ==================== Tab 1: 帖子 ==================== -->
+  <div class="tab-pane fade show active" id="tab-posts">
+    {% if posts %}
+    <div class="list-group shadow-sm">
+      {% for post in posts %}
+      <div class="list-group-item list-group-item-action p-3">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="flex-grow-1 me-3">
+            <p class="mb-1 small" style="white-space:pre-wrap">{{ post.content }}</p>
+            <!-- 高亮股票代码 -->
+            {% set tickers_in_post = post.content | extract_tickers_filter %}
+            {% if tickers_in_post %}
+            <div class="mt-1">
+              {% for tk in tickers_in_post %}
+              <a href="{{ url_for('stock_detail', ticker=tk) }}"
+                 class="badge bg-success text-decoration-none me-1">{{ tk }}</a>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <div class="text-end text-muted small" style="min-width:120px">
+            <div>{{ post.post_time }}</div>
+            <div class="text-muted" style="font-size:.7rem">发现于 {{ post.found_at }}</div>
+            {% if post.url %}
+            <a href="{{ post.url }}" target="_blank" rel="noopener"
+               class="btn btn-sm btn-outline-secondary mt-1">
+              <i class="bi bi-box-arrow-up-right"></i>
+            </a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+      还没有收集到帖子。启动追踪器后会自动填充。
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ==================== Tab 2: 股票 & 走势 ==================== -->
+  <div class="tab-pane fade" id="tab-stocks">
+    {% if stocks %}
+    <div class="row g-3" id="stocks-grid">
+      {% for s in stocks %}
+      <div class="col-12 col-xl-6">
+        <div class="card shadow-sm">
+          <div class="card-header d-flex align-items-center justify-content-between py-2">
+            <div class="d-flex align-items-center gap-2">
+              <a href="{{ url_for('stock_detail', ticker=s.ticker) }}"
+                 class="badge bg-success text-decoration-none fs-6">{{ s.ticker }}</a>
+              <span class="text-muted small">提及 {{ s.mention_count }} 次</span>
+              {% if s.change_pct is not none %}
+                <span class="badge {{ 'bg-success' if s.change_pct > 0 else ('bg-danger' if s.change_pct < 0 else 'bg-secondary') }}">
+                  {{ '+' if s.change_pct > 0 else '' }}{{ s.change_pct }}%
+                </span>
+              {% endif %}
+            </div>
+            <div class="btn-group btn-group-sm period-btns" data-ticker="{{ s.ticker }}">
+              <button class="btn btn-outline-secondary active" data-period="1mo">1M</button>
+              <button class="btn btn-outline-secondary" data-period="3mo">3M</button>
+              <button class="btn btn-outline-secondary" data-period="6mo">6M</button>
+              <button class="btn btn-outline-secondary" data-period="1y">1Y</button>
+            </div>
+          </div>
+          <div class="card-body p-2">
+            <div class="d-flex justify-content-between align-items-center px-2 mb-1">
+              <span id="name-{{ s.ticker }}" class="text-muted small">
+                {% if s.first_mentioned %}
+                  首次推荐: {{ s.first_mentioned[:10] }}
+                {% else %}
+                  加载中…
+                {% endif %}
+              </span>
+              <span id="price-{{ s.ticker }}" class="fw-semibold"></span>
+            </div>
+            <canvas id="chart-{{ s.ticker }}" height="160"></canvas>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-graph-up fs-1 d-block mb-2"></i>
+      该发布人的帖子中尚未发现 $TICKER 格式的股票代码
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ==================== Tab 3: 笔记 ==================== -->
+  <div class="tab-pane fade" id="tab-notes">
+    {% set all_tickers = stocks | map(attribute='ticker') | list %}
+
+    <!-- 按 ticker 分组显示笔记 -->
+    <div id="notes-area">
+      {% for ticker in all_tickers %}
+      <div class="mb-4" id="notes-section-{{ ticker }}">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <a href="{{ url_for('stock_detail', ticker=ticker) }}"
+             class="badge bg-success text-decoration-none fs-6">{{ ticker }}</a>
+          <button class="btn btn-sm btn-outline-success"
+                  onclick="showNoteForm('{{ ticker }}')">
+            <i class="bi bi-plus-lg me-1"></i>添加笔记
+          </button>
+        </div>
+
+        <!-- 新建笔记表单（默认隐藏）-->
+        <div id="form-{{ ticker }}" class="card mb-2 d-none">
+          <div class="card-body p-3">
+            <input type="text" class="form-control form-control-sm mb-2"
+                   id="note-title-{{ ticker }}" placeholder="笔记标题（选填）"/>
+            <textarea class="form-control form-control-sm mb-2" rows="4"
+                      id="note-content-{{ ticker }}"
+                      placeholder="在这里记录对 ${{ ticker }} 的调查结论、风险点、目标价格等…"></textarea>
+            <div class="d-flex gap-2 justify-content-end">
+              <button class="btn btn-sm btn-secondary"
+                      onclick="hideNoteForm('{{ ticker }}')">取消</button>
+              <button class="btn btn-sm btn-success"
+                      onclick="saveNote('{{ ticker }}')">保存</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 已有笔记列表 -->
+        <div id="notes-list-{{ ticker }}">
+          {% set ticker_notes = notes_by_ticker.get(ticker, []) %}
+          {% if ticker_notes %}
+            {% for note in ticker_notes %}
+            <div class="card mb-2 note-card" id="note-card-{{ note.id }}">
+              <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="flex-grow-1">
+                    {% if note.title %}
+                    <div class="fw-semibold mb-1">{{ note.title }}</div>
+                    {% endif %}
+                    <div class="small" style="white-space:pre-wrap">{{ note.content }}</div>
+                  </div>
+                  <div class="ms-3 text-end">
+                    <div class="text-muted" style="font-size:.7rem">{{ note.updated_at }}</div>
+                    <div class="mt-1">
+                      <button class="btn btn-xs btn-outline-secondary me-1"
+                              onclick="editNote({{ note.id }}, '{{ ticker }}')"
+                              title="编辑">
+                        <i class="bi bi-pencil"></i>
+                      </button>
+                      <button class="btn btn-xs btn-outline-danger"
+                              onclick="deleteNote({{ note.id }}, '{{ ticker }}')"
+                              title="删除">
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 编辑表单（默认隐藏）-->
+                <div id="edit-form-{{ note.id }}" class="d-none mt-2">
+                  <input type="text" class="form-control form-control-sm mb-2"
+                         id="edit-title-{{ note.id }}"
+                         value="{{ note.title }}"/>
+                  <textarea class="form-control form-control-sm mb-2" rows="4"
+                            id="edit-content-{{ note.id }}">{{ note.content }}</textarea>
+                  <div class="d-flex gap-2 justify-content-end">
+                    <button class="btn btn-sm btn-secondary"
+                            onclick="cancelEdit({{ note.id }})">取消</button>
+                    <button class="btn btn-sm btn-success"
+                            onclick="updateNote({{ note.id }}, '{{ ticker }}')">保存</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="text-muted small ps-1" id="notes-empty-{{ ticker }}">
+              还没有笔记，点击「添加笔记」记录你的调研结果
+            </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div><!-- /tab-content -->
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  /* ===== 图表 ===== */
+  const charts = {};
+
+  async function loadChart(ticker, period = "1mo") {
+    const r = await fetch(`/api/stock/${ticker}/history?period=${period}`);
+    const d = await r.json();
+
+    const nameEl  = document.getElementById(`name-${ticker}`);
+    const priceEl = document.getElementById(`price-${ticker}`);
+
+    if (d.error) {
+      nameEl.textContent = `⚠ ${d.error}`;
+      return;
+    }
+    nameEl.textContent = d.name || ticker;
+
+    let color;
+    let changeStr = "";
+    if (d.change_pct === null || d.change_pct === undefined) {
+      color = "#198754";
+    } else {
+      color = d.change_pct >= 0 ? "#198754" : "#dc3545";
+      const sign = d.change_pct > 0 ? "+" : "";
+      changeStr = ` (${sign}${d.change_pct}%)`;
+    }
+
+    if (d.current_price === null || d.current_price === undefined) {
+      priceEl.innerHTML = "";
+    } else {
+      priceEl.innerHTML = `<span style="color:${color}">${d.current_price.toFixed(2)} ${d.currency}${changeStr}</span>`;
+    }
+
+    const ctx = document.getElementById(`chart-${ticker}`)?.getContext("2d");
+    if (!ctx) return;
+
+    if (charts[ticker]) charts[ticker].destroy();
+    charts[ticker] = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: d.dates,
+        datasets: [{
+          data: d.closes,
+          borderColor: color,
+          backgroundColor: color + "18",
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3,
+        }],
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 6, font: { size: 10 } }, grid: { display: false } },
+          y: { ticks: { font: { size: 10 } }, position: "right" },
+        },
+        interaction: { intersect: false, mode: "index" },
+      },
+    });
+  }
+
+  // 切换周期按钮
+  document.querySelectorAll(".period-btns").forEach(group => {
+    const ticker = group.dataset.ticker;
+    group.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        group.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        loadChart(ticker, btn.dataset.period);
+      });
+    });
+  });
+
+  // 切换到 Tab 2 时加载图表
+  document.querySelector('[href="#tab-stocks"]')?.addEventListener("shown.bs.tab", () => {
+    document.querySelectorAll(".period-btns").forEach(g => {
+      loadChart(g.dataset.ticker, "1mo");
+    });
+  });
+
+  /* ===== 笔记 CRUD ===== */
+  function showNoteForm(ticker) {
+    document.getElementById(`form-${ticker}`)?.classList.remove("d-none");
+  }
+  function hideNoteForm(ticker) {
+    document.getElementById(`form-${ticker}`)?.classList.add("d-none");
+  }
+
+  async function saveNote(ticker) {
+    const title   = document.getElementById(`note-title-${ticker}`).value.trim();
+    const content = document.getElementById(`note-content-${ticker}`).value.trim();
+    if (!content) { alert("笔记内容不能为空"); return; }
+    const r = await fetch("/api/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticker, title, content }),
+    });
+    if ((await r.json()).ok) location.reload();
+  }
+
+  function editNote(id) {
+    document.getElementById(`edit-form-${id}`)?.classList.remove("d-none");
+  }
+  function cancelEdit(id) {
+    document.getElementById(`edit-form-${id}`)?.classList.add("d-none");
+  }
+
+  async function updateNote(id, ticker) {
+    const title   = document.getElementById(`edit-title-${id}`).value.trim();
+    const content = document.getElementById(`edit-content-${id}`).value.trim();
+    if (!content) { alert("内容不能为空"); return; }
+    const r = await fetch(`/api/notes/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, content }),
+    });
+    if ((await r.json()).ok) location.reload();
+  }
+
+  async function deleteNote(id) {
+    if (!confirm("确定要删除这条笔记吗？")) return;
+    const r = await fetch(`/api/notes/${id}`, { method: "DELETE" });
+    if ((await r.json()).ok) {
+      document.getElementById(`note-card-${id}`)?.remove();
+    }
+  }
+</script>
+{% endblock %}

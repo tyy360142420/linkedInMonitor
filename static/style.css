@@ -1,0 +1,155 @@
+/* ============================================================
+   LinkedIn 追踪器 — 自定义样式
+   ============================================================ */
+
+/* ---------- 品牌色变量 ---------- */
+:root {
+  --linkedin-blue:  #0a66c2;
+  --linkedin-dark:  #004182;
+  --twitter-black:  #000000;
+  --twitter-dark:   #333333;
+}
+
+/* ---- LinkedIn ---- */
+.bg-linkedin         { background-color: var(--linkedin-blue) !important; }
+.text-linkedin       { color: var(--linkedin-blue) !important; }
+
+.btn-linkedin {
+  background-color: var(--linkedin-blue);
+  border-color:     var(--linkedin-blue);
+  color: #fff;
+}
+.btn-linkedin:hover {
+  background-color: var(--linkedin-dark);
+  border-color:     var(--linkedin-dark);
+  color: #fff;
+}
+.btn-outline-linkedin {
+  border-color: var(--linkedin-blue);
+  color:        var(--linkedin-blue);
+}
+.btn-outline-linkedin:hover {
+  background-color: var(--linkedin-blue);
+  color: #fff;
+}
+.bg-linkedin-badge { background-color: var(--linkedin-blue) !important; color: #fff; }
+
+/* ---- Twitter / X ---- */
+.text-twitter        { color: var(--twitter-black) !important; }
+
+.btn-twitter {
+  background-color: var(--twitter-black);
+  border-color:     var(--twitter-black);
+  color: #fff;
+}
+.btn-twitter:hover {
+  background-color: var(--twitter-dark);
+  border-color:     var(--twitter-dark);
+  color: #fff;
+}
+.btn-outline-twitter {
+  border-color: var(--twitter-black);
+  color:        var(--twitter-black);
+}
+.btn-outline-twitter:hover {
+  background-color: var(--twitter-black);
+  color: #fff;
+}
+.bg-twitter-badge { background-color: var(--twitter-black) !important; color: #fff; }
+
+/* ---------- 状态指示灯 ---------- */
+.status-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot--stopped  { background: #6c757d; }
+.status-dot--running  {
+  background: #198754;
+  animation: pulse-green 2s infinite;
+}
+.status-dot--starting {
+  background: #ffc107;
+  animation: pulse-yellow 1.2s infinite;
+}
+.status-dot--checking {
+  background: #0d6efd;
+  animation: pulse-blue 0.9s infinite;
+}
+.status-dot--error    { background: #dc3545; }
+
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(25,135,84,.25); }
+  50%       { box-shadow: 0 0 0 7px rgba(25,135,84,.0);  }
+}
+@keyframes pulse-yellow {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(255,193,7,.35); }
+  50%       { box-shadow: 0 0 0 7px rgba(255,193,7,.0);  }
+}
+@keyframes pulse-blue {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(13,110,253,.35); }
+  50%       { box-shadow: 0 0 0 7px rgba(13,110,253,.0);  }
+}
+
+/* ---------- 平台 Icon ---------- */
+.platform-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+.platform-icon--lg {
+  width: 60px;
+  height: 60px;
+  font-size: 1.8rem;
+  border-radius: 14px;
+}
+.platform-icon--linkedin {
+  background: #e8f0fe;
+  color: var(--linkedin-blue);
+}
+.platform-icon--twitter {
+  background: #e8e8e8;
+  color: #000;
+}
+
+/* ---------- 日志查看器 ---------- */
+.log-viewer {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  border-radius: 0 0 0.375rem 0.375rem;
+  padding: 1rem;
+  height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---------- 笔记 / 通用 ---------- */
+.note-card { border-left: 3px solid #198754; }
+
+.btn-xs {
+  padding: .15rem .4rem;
+  font-size: .75rem;
+  border-radius: .2rem;
+  line-height: 1.4;
+}
+
+/* ---------- 卡片与导航栏 ---------- */
+.navbar-brand { letter-spacing: 0.02em; }
+.card { border: none; }
+.card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+}
+.table th { font-weight: 600; }
+.table td.small { word-break: break-all; }
+.target-url { max-width: 200px; overflow: hidden; }

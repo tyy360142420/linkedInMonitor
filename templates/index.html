@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+
+{% block title %}追踪器汇总 — LinkedIn + Twitter{% endblock %}
+
+{% block content %}
+
+<!-- ==================== Tab 导航栏 ==================== -->
+<ul class="nav nav-tabs mb-4" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="linkedin-tab" data-bs-toggle="tab" data-bs-target="#linkedin-panel" type="button" role="tab" aria-controls="linkedin-panel" aria-selected="true">
+      <i class="bi bi-linkedin me-2"></i>LinkedIn 追踪器
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="twitter-tab" data-bs-toggle="tab" data-bs-target="#twitter-panel" type="button" role="tab" aria-controls="twitter-panel" aria-selected="false">
+      <i class="bi bi-twitter-x me-2"></i>Twitter 追踪器
+    </button>
+  </li>
+</ul>
+
+<!-- ==================== Tab 内容 ==================== -->
+<div class="tab-content">
+
+  <!-- ==================== LinkedIn 模块 ==================== -->
+  <div class="tab-pane fade show active" id="linkedin-panel" role="tabpanel" aria-labelledby="linkedin-tab">
+    
+    <!-- 状态栏 -->
+    <div class="row g-3 mb-4">
+      <!-- 运行状态卡片 -->
+      <div class="col-12 col-md-5">
+        <div class="card shadow-sm h-100">
+          <div class="card-body d-flex flex-column justify-content-between">
+            <div class="d-flex align-items-center gap-3 mb-3">
+              <div id="linkedin-status-dot" class="status-dot status-dot--stopped"></div>
+              <div>
+                <div class="text-muted small">追踪器状态</div>
+                <div id="linkedin-status-text" class="fw-semibold fs-5">{{ linkedin_state.status_message }}</div>
+              </div>
+            </div>
+            <div class="d-flex gap-2">
+              <button id="linkedin-btn-start" class="btn btn-success flex-fill"
+                      onclick="controlTracker('start', 'linkedin')"
+                      {% if linkedin_state.running %}disabled{% endif %}>
+                <i class="bi bi-play-fill me-1"></i>启动
+              </button>
+              <button id="linkedin-btn-stop" class="btn btn-danger flex-fill"
+                      onclick="controlTracker('stop', 'linkedin')"
+                      {% if not linkedin_state.running %}disabled{% endif %}>
+                <i class="bi bi-stop-fill me-1"></i>停止
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 统计信息卡片 -->
+      <div class="col-12 col-md-7">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <div class="row g-3 text-center">
+              <div class="col-4">
+                <div class="text-muted small mb-1">监控目标</div>
+                <div class="fw-semibold text-truncate target-url" title="{{ cfg.TARGET_PROFILE_URL }}">
+                  {% if cfg.TARGET_PROFILE_URL %}
+                    <a href="{{ cfg.TARGET_PROFILE_URL }}" target="_blank" rel="noopener"
+                       class="text-decoration-none text-linkedin">
+                      <i class="bi bi-person-circle me-1"></i>查看主页
+                    </a>
+                  {% else %}
+                    <span class="text-muted">未配置</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">上次检查</div>
+                <div id="linkedin-last-check" class="fw-semibold small">
+                  {{ linkedin_state.last_check_at or '—' }}
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">下次检查</div>
+                <div id="linkedin-next-check" class="fw-semibold small">
+                  {{ linkedin_state.next_check_at or '—' }}
+                </div>
+              </div>
+            </div>
+            <hr class="my-3" />
+            <div class="row g-3 text-center">
+              <div class="col-4">
+                <div class="text-muted small mb-1">本次会话发现帖子</div>
+                <div id="linkedin-posts-total" class="fw-bold fs-4 text-linkedin">{{ linkedin_state.posts_total }}</div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">检查间隔</div>
+                <div class="fw-bold fs-4">{{ cfg.CHECK_INTERVAL_MINUTES }}<span class="fs-6 text-muted"> 分钟</span></div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">通知邮箱</div>
+                <div class="fw-semibold small text-truncate" title="{{ cfg.NOTIFY_EMAIL_RECIPIENT }}">
+                  {{ cfg.NOTIFY_EMAIL_RECIPIENT or '未配置' }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 错误提示 -->
+    <div id="linkedin-error-alert" class="alert alert-danger d-none mb-4" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>
+      <span id="linkedin-error-text"></span>
+    </div>
+
+    <!-- 最近发现的帖子 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <span class="fw-semibold"><i class="bi bi-newspaper me-2"></i>最近发现的帖子</span>
+        <button class="btn btn-sm btn-outline-secondary" onclick="clearSeen('linkedin')">
+          <i class="bi bi-trash me-1"></i>清空已见记录
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div id="linkedin-posts-container">
+          {% if linkedin_state.posts_found %}
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light text-muted small">
+                  <tr>
+                    <th class="ps-3" style="width:130px">发现时间</th>
+                    <th style="width:130px">帖子时间</th>
+                    <th>内容摘要</th>
+                    <th style="width:60px">链接</th>
+                  </tr>
+                </thead>
+                <tbody id="linkedin-posts-body">
+                  {% for post in linkedin_state.posts_found | reverse %}
+                  <tr class="{{ 'table-success' if post.is_new else '' }}">
+                    <td class="ps-3 small text-muted">{{ post.found_at }}</td>
+                    <td class="small text-muted">{{ post.timestamp }}</td>
+                    <td class="small">{{ post.content[:120] }}{% if post.content|length > 120 %}…{% endif %}</td>
+                    <td>
+                      {% if post.url %}
+                      <a href="{{ post.url }}" target="_blank" rel="noopener"
+                         class="btn btn-sm btn-outline-linkedin">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                      </a>
+                      {% endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div id="linkedin-posts-empty" class="text-center text-muted py-5">
+              <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+              本次会话尚未发现新帖子
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- 日志查看器 -->
+    <div class="card shadow-sm">
+      <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <span class="fw-semibold"><i class="bi bi-terminal me-2"></i>运行日志</span>
+        <div class="d-flex align-items-center gap-2">
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="linkedin-autoRefreshToggle" checked />
+            <label class="form-check-label small text-muted" for="linkedin-autoRefreshToggle">自动刷新</label>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" onclick="refreshLogs('linkedin')">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <pre id="linkedin-log-viewer" class="log-viewer mb-0">正在加载日志…</pre>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ==================== Twitter 模块 ==================== -->
+  <div class="tab-pane fade" id="twitter-panel" role="tabpanel" aria-labelledby="twitter-tab">
+    
+    <!-- 状态栏 -->
+    <div class="row g-3 mb-4">
+      <!-- 运行状态卡片 -->
+      <div class="col-12 col-md-5">
+        <div class="card shadow-sm h-100">
+          <div class="card-body d-flex flex-column justify-content-between">
+            <div class="d-flex align-items-center gap-3 mb-3">
+              <div id="twitter-status-dot" class="status-dot status-dot--stopped"></div>
+              <div>
+                <div class="text-muted small">追踪器状态</div>
+                <div id="twitter-status-text" class="fw-semibold fs-5">{{ twitter_state.status_message }}</div>
+              </div>
+            </div>
+            <div class="d-flex gap-2">
+              <button id="twitter-btn-start" class="btn btn-success flex-fill"
+                      onclick="controlTracker('start', 'twitter')"
+                      {% if twitter_state.running %}disabled{% endif %}>
+                <i class="bi bi-play-fill me-1"></i>启动
+              </button>
+              <button id="twitter-btn-stop" class="btn btn-danger flex-fill"
+                      onclick="controlTracker('stop', 'twitter')"
+                      {% if not twitter_state.running %}disabled{% endif %}>
+                <i class="bi bi-stop-fill me-1"></i>停止
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 统计信息卡片 -->
+      <div class="col-12 col-md-7">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <div class="row g-3 text-center">
+              <div class="col-4">
+                <div class="text-muted small mb-1">监控账号</div>
+                <div class="fw-semibold text-truncate">
+                  {% if cfg.TWITTER_USERNAME %}
+                    <a href="https://twitter.com/{{ cfg.TWITTER_USERNAME }}" target="_blank" rel="noopener"
+                       class="text-decoration-none" style="color:#1d9bf0">
+                      <i class="bi bi-twitter-x me-1"></i>@{{ cfg.TWITTER_USERNAME }}
+                    </a>
+                  {% else %}
+                    <span class="text-muted">未配置</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">上次检查</div>
+                <div id="twitter-last-check" class="fw-semibold small">
+                  {{ twitter_state.last_check_at or '—' }}
+                </div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">下次检查</div>
+                <div id="twitter-next-check" class="fw-semibold small">
+                  {{ twitter_state.next_check_at or '—' }}
+                </div>
+              </div>
+            </div>
+            <hr class="my-3" />
+            <div class="row g-3 text-center">
+              <div class="col-4">
+                <div class="text-muted small mb-1">本次会话发现推文</div>
+                <div id="twitter-posts-total" class="fw-bold fs-4" style="color:#1d9bf0">{{ twitter_state.posts_total }}</div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">检查间隔</div>
+                <div class="fw-bold fs-4">{{ cfg.TWITTER_CHECK_INTERVAL_MINUTES }}<span class="fs-6 text-muted"> 分钟</span></div>
+              </div>
+              <div class="col-4">
+                <div class="text-muted small mb-1">运行模式</div>
+                <div class="fw-semibold small">
+                  {{ '无头模式' if cfg.TWITTER_HEADLESS else '浏览器模式' }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 错误提示 -->
+    <div id="twitter-error-alert" class="alert alert-danger d-none mb-4" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>
+      <span id="twitter-error-text"></span>
+    </div>
+
+    <!-- 最近发现的推文 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <span class="fw-semibold"><i class="bi bi-chat-left-text me-2"></i>最近发现的推文</span>
+        <button class="btn btn-sm btn-outline-secondary" onclick="clearSeen('twitter')">
+          <i class="bi bi-trash me-1"></i>清空已见记录
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div id="twitter-posts-container">
+          {% if twitter_state.posts_found %}
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light text-muted small">
+                  <tr>
+                    <th class="ps-3" style="width:130px">发现时间</th>
+                    <th style="width:130px">推文时间</th>
+                    <th>内容摘要</th>
+                    <th style="width:60px">链接</th>
+                  </tr>
+                </thead>
+                <tbody id="twitter-posts-body">
+                  {% for post in twitter_state.posts_found | reverse %}
+                  <tr class="{{ 'table-success' if post.is_new else '' }}">
+                    <td class="ps-3 small text-muted">{{ post.found_at }}</td>
+                    <td class="small text-muted">{{ post.timestamp }}</td>
+                    <td class="small">{{ post.content[:120] }}{% if post.content|length > 120 %}…{% endif %}</td>
+                    <td>
+                      {% if post.url %}
+                      <a href="{{ post.url }}" target="_blank" rel="noopener"
+                         class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                      </a>
+                      {% endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div id="twitter-posts-empty" class="text-center text-muted py-5">
+              <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+              本次会话尚未发现新推文
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- 日志查看器 -->
+    <div class="card shadow-sm">
+      <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <span class="fw-semibold"><i class="bi bi-terminal me-2"></i>运行日志</span>
+        <div class="d-flex align-items-center gap-2">
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="twitter-autoRefreshToggle" checked />
+            <label class="form-check-label small text-muted" for="twitter-autoRefreshToggle">自动刷新</label>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" onclick="refreshLogs('twitter')">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <pre id="twitter-log-viewer" class="log-viewer mb-0">正在加载日志…</pre>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const STATUS_LABELS = {
+    stopped:  { text: "已停止",     cls: "status-dot--stopped"  },
+    starting: { text: "正在启动…",  cls: "status-dot--starting" },
+    running:  { text: "运行中",     cls: "status-dot--running"  },
+    checking: { text: "检查中…",    cls: "status-dot--checking" },
+    error:    { text: "发生错误",   cls: "status-dot--error"    },
+  };
+
+  // 状态刷新定时器
+  let refreshIntervals = {};
+
+  // ---------- 通用状态刷新函数 ----------
+  async function refreshStatus(tracker) {
+    try {
+      const endpoint = tracker === 'twitter' ? '/api/twitter/status' : '/api/status';
+      const r = await fetch(endpoint);
+      const d = await r.json();
+      applyStatus(tracker, d);
+    } catch (_) {}
+  }
+
+  function applyStatus(tracker, d) {
+    const prefix = tracker === 'twitter' ? 'twitter' : 'linkedin';
+    const dot  = document.getElementById(`${prefix}-status-dot`);
+    const text = document.getElementById(`${prefix}-status-text`);
+    const info = STATUS_LABELS[d.status] || STATUS_LABELS["stopped"];
+
+    dot.className = "status-dot " + info.cls;
+    text.textContent = d.status_message || info.text;
+
+    document.getElementById(`${prefix}-last-check`).textContent = d.last_check_at || "—";
+    document.getElementById(`${prefix}-next-check`).textContent = d.next_check_at || "—";
+    document.getElementById(`${prefix}-posts-total`).textContent = d.posts_total;
+
+    document.getElementById(`${prefix}-btn-start`).disabled = d.running;
+    document.getElementById(`${prefix}-btn-stop`).disabled  = !d.running;
+
+    const errAlert = document.getElementById(`${prefix}-error-alert`);
+    if (d.last_error && d.status === "error") {
+      document.getElementById(`${prefix}-error-text`).textContent = d.last_error;
+      errAlert.classList.remove("d-none");
+    } else {
+      errAlert.classList.add("d-none");
+    }
+
+    // 更新帖子列表
+    if (d.posts_found && d.posts_found.length > 0) {
+      const emptyEl = document.getElementById(`${prefix}-posts-empty`);
+      if (emptyEl) emptyEl.remove();
+      const tbody = document.getElementById(`${prefix}-posts-body`);
+      if (tbody) {
+        const reversed = [...d.posts_found].reverse();
+        tbody.innerHTML = reversed.map(p => `
+          <tr class="${p.is_new ? 'table-success' : ''}">
+            <td class="ps-3 small text-muted">${p.found_at}</td>
+            <td class="small text-muted">${p.timestamp}</td>
+            <td class="small">${escHtml(p.content.substring(0, 120))}${p.content.length > 120 ? '…' : ''}</td>
+            <td>${p.url ? `<a href="${escHtml(p.url)}" target="_blank" rel="noopener"
+                              class="btn btn-sm btn-outline-${tracker === 'twitter' ? 'secondary' : 'linkedin'}">
+                            <i class="bi bi-box-arrow-up-right"></i></a>` : ''}</td>
+          </tr>`).join("");
+      }
+    }
+  }
+
+  // ---------- 日志刷新 ----------
+  async function refreshLogs(tracker) {
+    try {
+      const endpoint = tracker === 'twitter' ? '/api/logs?source=twitter' : '/api/logs';
+      const r = await fetch(endpoint);
+      const d = await r.json();
+      const viewer = document.getElementById(`${tracker}-log-viewer`);
+      viewer.textContent = d.lines.join("\n") || "（日志为空）";
+    } catch (_) {}
+  }
+
+  // ---------- 控制按钮 ----------
+  async function controlTracker(action, tracker) {
+    const prefix = tracker === 'twitter' ? 'twitter' : 'linkedin';
+    document.getElementById(`${prefix}-btn-start`).disabled = true;
+    document.getElementById(`${prefix}-btn-stop`).disabled  = true;
+    try {
+      const endpoint = tracker === 'twitter' ? `/api/twitter/${action}` : `/api/${action}`;
+      const r = await fetch(endpoint, { method: "POST" });
+      const d = await r.json();
+      if (!d.ok) {
+        alert(d.error || "操作失败");
+      }
+      refreshStatus(tracker);
+    } catch (e) {
+      alert("网络错误: " + e);
+    }
+  }
+
+  // ---------- 清除已见记录 ----------
+  async function clearSeen(tracker) {
+    if (!confirm("确定要清空已见记录吗？")) return;
+    try {
+      const r = await fetch("/api/clear-seen", { method: "POST" });
+      const d = await r.json();
+      if (!d.ok) {
+        alert(d.error || "操作失败");
+        return;
+      }
+      const prefix = tracker === 'twitter' ? 'twitter' : 'linkedin';
+      const container = document.getElementById(`${prefix}-posts-container`);
+      container.innerHTML = `
+        <div id="${prefix}-posts-empty" class="text-center text-muted py-5">
+          <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+          本次会话尚未发现新帖子
+        </div>`;
+      document.getElementById(`${prefix}-posts-total`).textContent = "0";
+    } catch (e) {
+      alert("网络错误: " + e);
+    }
+  }
+
+  // ---------- HTML 转义 ----------
+  function escHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  // ---------- 初始化定时刷新 ----------
+  function startAutoRefresh(tracker) {
+    if (refreshIntervals[tracker]) {
+      clearInterval(refreshIntervals[tracker]);
+    }
+    refreshStatus(tracker);
+    refreshLogs(tracker);
+    refreshIntervals[tracker] = setInterval(() => {
+      const toggle = document.getElementById(`${tracker}-autoRefreshToggle`);
+      if (toggle && toggle.checked) {
+        refreshStatus(tracker);
+        refreshLogs(tracker);
+      }
+    }, 2000);
+  }
+
+  // 初始化 LinkedIn 和 Twitter 刷新
+  document.addEventListener('DOMContentLoaded', () => {
+    startAutoRefresh('linkedin');
+    startAutoRefresh('twitter');
+
+    // 监听 Tab 切换事件
+    document.getElementById('linkedin-tab').addEventListener('shown.bs.tab', () => {
+      startAutoRefresh('linkedin');
+    });
+    document.getElementById('twitter-tab').addEventListener('shown.bs.tab', () => {
+      startAutoRefresh('twitter');
+    });
+  });
+</script>
+{% endblock %}

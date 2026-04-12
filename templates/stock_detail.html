@@ -1,0 +1,415 @@
+{% extends "base.html" %}
+{% block title %}${{ ticker }} — 股票详情{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center gap-2 mb-4">
+  <a href="{{ url_for('stocks_page') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  <span class="badge bg-success fs-5 px-3 py-2">{{ ticker }}</span>
+  <span id="stock-name" class="text-muted">加载中…</span>
+  <span id="stock-price" class="ms-auto fw-bold fs-5"></span>
+</div>
+
+<!-- 图表 -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between py-2">
+    <span class="fw-semibold"><i class="bi bi-graph-up me-2"></i>价格走势</span>
+    <div class="btn-group btn-group-sm" id="period-group">
+      <button class="btn btn-outline-secondary active" data-period="1mo">1 月</button>
+      <button class="btn btn-outline-secondary" data-period="3mo">3 月</button>
+      <button class="btn btn-outline-secondary" data-period="6mo">6 月</button>
+      <button class="btn btn-outline-secondary" data-period="1y">1 年</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <canvas id="price-chart" height="260"></canvas>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header py-2 fw-semibold d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-newspaper me-2"></i>股票简讯时间轴</span>
+    <span class="text-muted small">与上方价格曲线同周期</span>
+  </div>
+  <div class="card-body">
+    <div id="news-insights" class="row g-2 mb-3"></div>
+    <div id="news-timeline" class="list-group list-group-flush">
+      <div class="text-muted small">加载简讯中…</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+
+  <!-- 提到此股票的发布人 -->
+  <div class="col-12 col-lg-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header py-2 fw-semibold">
+        <i class="bi bi-people me-2"></i>提到此股票的发布人
+      </div>
+      {% if publishers %}
+      <ul class="list-group list-group-flush">
+        {% for pub in publishers %}
+        <li class="list-group-item d-flex align-items-center gap-2">
+          <i class="bi bi-{{ 'linkedin' if pub.platform == 'linkedin' else 'twitter-x' }}
+             text-{{ 'linkedin' if pub.platform == 'linkedin' else 'twitter' }}"></i>
+          <a href="{{ url_for('publisher_detail', pub_id=pub.id) }}"
+             class="text-decoration-none fw-semibold flex-grow-1">
+            {{ pub.name }}
+          </a>
+          <span class="badge bg-secondary">{{ pub.mention_count }}次</span>
+          <span class="text-muted small">{{ pub.last_mentioned[:10] }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="card-body text-center text-muted">暂无发布人数据</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 相关帖子 -->
+  <div class="col-12 col-lg-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header py-2 fw-semibold">
+        <i class="bi bi-chat-text me-2"></i>相关帖子
+      </div>
+      {% if posts %}
+      <div class="list-group list-group-flush" style="max-height:400px;overflow-y:auto">
+        {% for post in posts %}
+        <div class="list-group-item p-3">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <i class="bi bi-{{ 'linkedin' if post.platform == 'linkedin' else 'twitter-x' }} small
+               text-{{ 'linkedin' if post.platform == 'linkedin' else 'twitter' }}"></i>
+            <span class="small fw-semibold">{{ post.publisher_name }}</span>
+            <span class="text-muted ms-auto" style="font-size:.7rem">{{ post.post_time[:10] if post.post_time else '' }}</span>
+          </div>
+          <div class="small text-muted" style="white-space:pre-wrap;max-height:80px;overflow:hidden">{{ post.content }}</div>
+          {% if post.url %}
+          <a href="{{ post.url }}" target="_blank" rel="noopener"
+             class="btn btn-xs btn-outline-secondary mt-1">
+            <i class="bi bi-box-arrow-up-right me-1"></i>查看原文
+          </a>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="card-body text-center text-muted">暂无相关帖子</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<!-- 笔记区 -->
+<div class="card shadow-sm mt-4">
+  <div class="card-header d-flex justify-content-between align-items-center py-2">
+    <span class="fw-semibold"><i class="bi bi-journal-text me-2"></i>我的调研笔记</span>
+    <button class="btn btn-sm btn-success" onclick="showForm()">
+      <i class="bi bi-plus-lg me-1"></i>新建笔记
+    </button>
+  </div>
+  <div class="card-body">
+
+    <!-- 新建表单 -->
+    <div id="new-form" class="card mb-3 d-none">
+      <div class="card-body p-3">
+        <input type="text" class="form-control form-control-sm mb-2"
+               id="new-title" placeholder="笔记标题（选填）"/>
+        <textarea class="form-control form-control-sm mb-2" rows="5"
+                  id="new-content"
+                  placeholder="记录你对 ${{ ticker }} 的调查结果、目标价位、风险点…"></textarea>
+        <div class="d-flex gap-2 justify-content-end">
+          <button class="btn btn-sm btn-secondary" onclick="hideForm()">取消</button>
+          <button class="btn btn-sm btn-success" onclick="createNote()">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 笔记列表 -->
+    <div id="notes-list">
+      {% for note in notes %}
+      <div class="card mb-3" id="nc-{{ note.id }}">
+        <div class="card-body p-3">
+          <div class="d-flex justify-content-between">
+            <div class="flex-grow-1">
+              {% if note.title %}<div class="fw-semibold mb-1">{{ note.title }}</div>{% endif %}
+              <div class="small" id="nc-body-{{ note.id }}" style="white-space:pre-wrap">{{ note.content }}</div>
+            </div>
+            <div class="ms-3 text-end">
+              <div class="text-muted" style="font-size:.7rem">{{ note.updated_at }}</div>
+              <div class="mt-1 d-flex gap-1 justify-content-end">
+                <button class="btn btn-xs btn-outline-secondary"
+                        onclick="startEdit({{ note.id }}, {{ note.title|tojson }}, {{ note.content|tojson }})">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-xs btn-outline-danger"
+                        onclick="removeNote({{ note.id }})">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- 编辑表单 -->
+          <div id="edit-{{ note.id }}" class="d-none mt-2">
+            <input type="text" class="form-control form-control-sm mb-2"
+                   id="et-{{ note.id }}" value="{{ note.title }}"/>
+            <textarea class="form-control form-control-sm mb-2" rows="5"
+                      id="ec-{{ note.id }}">{{ note.content }}</textarea>
+            <div class="d-flex gap-2 justify-content-end">
+              <button class="btn btn-sm btn-secondary"
+                      onclick="cancelEdit({{ note.id }})">取消</button>
+              <button class="btn btn-sm btn-success"
+                      onclick="submitEdit({{ note.id }})">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-4" id="empty-notes">
+        <i class="bi bi-journal-x fs-1 d-block mb-2"></i>
+        还没有笔记，点击「新建笔记」开始记录
+      </div>
+      {% endfor %}
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  const TICKER = {{ ticker | tojson }};
+  let mainChart = null;
+  let latestNews = [];
+
+  async function loadChart(period = "1mo") {
+    const r = await fetch(`/api/stock/${TICKER}/history?period=${period}`);
+    const d = await r.json();
+
+    document.getElementById("stock-name").textContent = d.error ? `⚠ ${d.error}` : (d.name || TICKER);
+
+    const color = d.change_pct != null ? (d.change_pct >= 0 ? "#198754" : "#dc3545") : "#198754";
+    if (d.current_price != null) {
+      const changeStr = d.change_pct != null
+        ? ` (${d.change_pct > 0 ? "+" : ""}${d.change_pct}%)`
+        : "";
+      document.getElementById("stock-price").innerHTML =
+        `<span style="color:${color}">${d.current_price.toFixed(2)} ${d.currency}${changeStr}</span>`;
+    }
+
+    if (d.error || !d.dates.length) return;
+
+    latestNews = Array.isArray(d.news) ? d.news : [];
+    renderNewsInsights(d.news_summary || null);
+    renderNewsTimeline(latestNews, d.dates);
+
+    const newsPoints = buildNewsPoints(d.dates, d.closes, latestNews);
+
+    const ctx = document.getElementById("price-chart").getContext("2d");
+    if (mainChart) mainChart.destroy();
+    mainChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: d.dates,
+        datasets: [
+          {
+            data: d.closes,
+            borderColor: color,
+            backgroundColor: color + "18",
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: true,
+            tension: 0.3,
+          },
+          {
+            type: "scatter",
+            label: "简讯",
+            data: newsPoints,
+            pointRadius: 5,
+            pointHoverRadius: 7,
+            pointBackgroundColor: "#0d6efd",
+            pointBorderColor: "#ffffff",
+            pointBorderWidth: 1.5,
+            showLine: false,
+          }
+        ],
+      },
+      options: {
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                if (ctx.dataset.type === "scatter") {
+                  const n = ctx.raw?.news;
+                  if (!n) return "简讯";
+                  return `${n.date} | ${n.source}: ${n.title}`;
+                }
+                return `收盘价: ${ctx.raw}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8, font: { size: 11 } }, grid: { display: false } },
+          y: { ticks: { font: { size: 11 } }, position: "right" },
+        },
+        interaction: { intersect: false, mode: "index" },
+      },
+    });
+  }
+
+  function buildNewsPoints(dates, closes, newsItems) {
+    if (!Array.isArray(newsItems) || !newsItems.length) return [];
+    return newsItems
+      .map(n => {
+        const idx = dates.indexOf(n.date);
+        if (idx < 0) return null;
+        return { x: dates[idx], y: closes[idx], news: n };
+      })
+      .filter(Boolean);
+  }
+
+  function renderNewsTimeline(newsItems, datesInChart) {
+    const holder = document.getElementById("news-timeline");
+    const dateSet = new Set(datesInChart || []);
+    const visible = (newsItems || []).filter(n => dateSet.has(n.date));
+
+    if (!visible.length) {
+      holder.innerHTML = '<div class="text-muted small">当前周期没有可显示的简讯</div>';
+      return;
+    }
+
+    holder.innerHTML = visible.map(n => {
+      const safeTitle = escapeHtml(n.title || "(无标题)");
+      const safeSource = escapeHtml(n.source || "未知来源");
+      const safeType = escapeHtml(n.event_type || "其他");
+      const safeUrl = escapeHtml(n.url || "");
+      const impact = n.impact_pct;
+      let impactBadge = '<span class="badge bg-secondary">影响未知</span>';
+      if (impact !== null && impact !== undefined) {
+        const cls = impact > 0 ? 'bg-success' : (impact < 0 ? 'bg-danger' : 'bg-secondary');
+        const sign = impact > 0 ? '+' : '';
+        impactBadge = `<span class="badge ${cls}">3日 ${sign}${impact}%</span>`;
+      }
+      return `
+        <div class="list-group-item px-0">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <div class="small fw-semibold">${safeTitle}</div>
+              <div class="text-muted" style="font-size:.75rem">${n.published_at} · ${safeSource} · 事件: ${safeType}</div>
+            </div>
+            <div class="d-flex align-items-center gap-1">
+              ${impactBadge}
+              ${safeUrl ? `<a href="${safeUrl}" target="_blank" rel="noopener" class="btn btn-xs btn-outline-primary">查看</a>` : ''}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderNewsInsights(summary) {
+    const box = document.getElementById("news-insights");
+    if (!summary || !summary.evaluable_count) {
+      box.innerHTML = '<div class="col-12"><div class="text-muted small">当前周期内可评估的简讯影响不足，暂无法形成触发统计。</div></div>';
+      return;
+    }
+
+    const upRatio = summary.up_ratio != null ? `${summary.up_ratio}%` : "—";
+    const upTriggers = (summary.top_up_triggers || [])
+      .map(x => `<span class="badge bg-success-subtle text-success-emphasis me-1">${escapeHtml(x.event_type)} (${x.count})</span>`)
+      .join('') || '<span class="text-muted small">暂无</span>';
+    const downTriggers = (summary.top_down_triggers || [])
+      .map(x => `<span class="badge bg-danger-subtle text-danger-emphasis me-1">${escapeHtml(x.event_type)} (${x.count})</span>`)
+      .join('') || '<span class="text-muted small">暂无</span>';
+
+    box.innerHTML = `
+      <div class="col-12 col-lg-4">
+        <div class="bg-light rounded p-2 h-100">
+          <div class="small text-muted">可评估简讯</div>
+          <div class="fw-bold">${summary.evaluable_count}</div>
+          <div class="small text-success">上涨: ${summary.up_count}</div>
+          <div class="small text-danger">下跌: ${summary.down_count}</div>
+          <div class="small mt-1">上涨占比: <span class="fw-semibold">${upRatio}</span></div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-4">
+        <div class="bg-light rounded p-2 h-100">
+          <div class="small text-muted mb-1">上涨常见触发事件</div>
+          <div>${upTriggers}</div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-4">
+        <div class="bg-light rounded p-2 h-100">
+          <div class="small text-muted mb-1">下跌常见触发事件</div>
+          <div>${downTriggers}</div>
+        </div>
+      </div>`;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
+
+  document.querySelectorAll("#period-group button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#period-group button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      loadChart(btn.dataset.period);
+    });
+  });
+
+  loadChart("1mo");
+
+  /* ===== 笔记 CRUD ===== */
+  function showForm() { document.getElementById("new-form").classList.remove("d-none"); }
+  function hideForm() { document.getElementById("new-form").classList.add("d-none"); }
+
+  async function createNote() {
+    const title   = document.getElementById("new-title").value.trim();
+    const content = document.getElementById("new-content").value.trim();
+    if (!content) { alert("内容不能为空"); return; }
+    const r = await fetch("/api/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticker: TICKER, title, content }),
+    });
+    if ((await r.json()).ok) location.reload();
+  }
+
+  function startEdit(id, title, content) {
+    document.getElementById(`edit-${id}`).classList.remove("d-none");
+    document.getElementById(`nc-body-${id}`).classList.add("d-none");
+  }
+  function cancelEdit(id) {
+    document.getElementById(`edit-${id}`).classList.add("d-none");
+    document.getElementById(`nc-body-${id}`).classList.remove("d-none");
+  }
+  async function submitEdit(id) {
+    const title   = document.getElementById(`et-${id}`).value.trim();
+    const content = document.getElementById(`ec-${id}`).value.trim();
+    if (!content) { alert("内容不能为空"); return; }
+    const r = await fetch(`/api/notes/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, content }),
+    });
+    if ((await r.json()).ok) location.reload();
+  }
+  async function removeNote(id) {
+    if (!confirm("确定要删除这条笔记吗？")) return;
+    const r = await fetch(`/api/notes/${id}`, { method: "DELETE" });
+    if ((await r.json()).ok) document.getElementById(`nc-${id}`)?.remove();
+  }
+</script>
+{% endblock %}

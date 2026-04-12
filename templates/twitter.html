@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+{% block title %}Twitter 监控 — LinkedIn 追踪器{% endblock %}
+
+{% block content %}
+
+<!-- 状态卡片行 -->
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-body d-flex flex-column justify-content-between">
+        <div class="d-flex align-items-center gap-3 mb-3">
+          <div id="tw-status-dot" class="status-dot {{ 'status-dot--running' if state.running else 'status-dot--stopped' }}"></div>
+          <div>
+            <div class="text-muted small">Twitter 追踪状态</div>
+            <div id="tw-status-text" class="fw-semibold fs-5">{{ state.status_message }}</div>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <button id="btn-tw-start" class="btn btn-twitter flex-fill"
+                  onclick="twControl('start')"
+                  {% if state.running %}disabled{% endif %}>
+            <i class="bi bi-play-fill me-1"></i>启动
+          </button>
+          <button id="btn-tw-stop" class="btn btn-danger flex-fill"
+                  onclick="twControl('stop')"
+                  {% if not state.running %}disabled{% endif %}>
+            <i class="bi bi-stop-fill me-1"></i>停止
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="row g-3 text-center">
+          <div class="col-4">
+            <div class="text-muted small mb-1">监控账号数</div>
+            <div class="fw-bold fs-4 text-twitter">{{ accounts | length }}</div>
+          </div>
+          <div class="col-4">
+            <div class="text-muted small mb-1">上次检查</div>
+            <div id="tw-last-check" class="fw-semibold small">{{ state.last_check_at or '—' }}</div>
+          </div>
+          <div class="col-4">
+            <div class="text-muted small mb-1">下次检查</div>
+            <div id="tw-next-check" class="fw-semibold small">{{ state.next_check_at or '—' }}</div>
+          </div>
+        </div>
+        <hr class="my-3"/>
+        <div class="row g-3 text-center">
+          <div class="col-4">
+            <div class="text-muted small mb-1">本次会话发现推文</div>
+            <div id="tw-tweets-total" class="fw-bold fs-4 text-twitter">{{ state.tweets_total }}</div>
+          </div>
+          <div class="col-4">
+            <div class="text-muted small mb-1">检查间隔</div>
+            <div class="fw-bold fs-4">{{ cfg.TWITTER_CHECK_INTERVAL_MINUTES }}<span class="fs-6 text-muted"> 分钟</span></div>
+          </div>
+          <div class="col-4">
+            <div class="text-muted small mb-1">账号管理</div>
+            <a href="{{ url_for('publishers_page') }}" class="btn btn-sm btn-outline-twitter mt-1">
+              <i class="bi bi-people me-1"></i>发布人管理
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 错误提示 -->
+<div id="tw-error-alert" class="alert alert-danger d-none mb-4">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i>
+  <span id="tw-error-text"></span>
+</div>
+
+<!-- 监控账号列表 -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between py-2">
+    <span class="fw-semibold"><i class="bi bi-people me-2"></i>监控的 Twitter 账号</span>
+    <button class="btn btn-sm btn-twitter" data-bs-toggle="modal" data-bs-target="#addAccountModal">
+      <i class="bi bi-plus-lg me-1"></i>添加账号
+    </button>
+  </div>
+  <div class="card-body p-0">
+    {% if accounts %}
+    <table class="table table-hover mb-0">
+      <thead class="table-light text-muted small">
+        <tr>
+          <th class="ps-3">账号</th>
+          <th>帖子数</th>
+          <th>提到股票数</th>
+          <th>添加时间</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for acc in accounts %}
+        <tr>
+          <td class="ps-3">
+            <a href="https://x.com/{{ acc.handle }}" target="_blank" rel="noopener"
+               class="text-decoration-none fw-semibold text-twitter">
+              <i class="bi bi-twitter-x me-1"></i>@{{ acc.handle }}
+            </a>
+            {% if acc.name != acc.handle and acc.name != '@' ~ acc.handle %}
+              <div class="text-muted small">{{ acc.name }}</div>
+            {% endif %}
+          </td>
+          <td>{{ acc.post_count }}</td>
+          <td>{{ acc.ticker_count }}</td>
+          <td class="text-muted small">{{ acc.created_at }}</td>
+          <td>
+            <a href="{{ url_for('publisher_detail', pub_id=acc.id) }}"
+               class="btn btn-sm btn-outline-secondary me-1">
+              <i class="bi bi-person-lines-fill"></i>
+            </a>
+            <button class="btn btn-sm btn-outline-danger"
+                  onclick='deletePublisher({{ acc.id }}, {{ ("@" ~ acc.handle)|tojson }})'>
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-twitter-x fs-1 d-block mb-2"></i>
+      还没有添加任何 Twitter 账号，点击右上角「添加账号」开始监控
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- 最近推文 -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header py-2 fw-semibold">
+    <i class="bi bi-chat-text me-2"></i>本次会话发现的推文
+  </div>
+  <div class="card-body p-0">
+    <div id="tw-tweets-container">
+      {% if state.tweets_found %}
+      <table class="table table-hover mb-0">
+        <thead class="table-light text-muted small">
+          <tr>
+            <th class="ps-3" style="width:90px">账号</th>
+            <th>内容</th>
+            <th style="width:120px">股票代码</th>
+            <th style="width:60px">链接</th>
+          </tr>
+        </thead>
+        <tbody id="tw-tweets-body">
+          {% for t in state.tweets_found | reverse %}
+          <tr>
+            <td class="ps-3 small fw-semibold text-twitter">@{{ t.handle }}</td>
+            <td class="small">{{ t.content[:120] }}{% if t.content|length > 120 %}…{% endif %}</td>
+            <td>
+              {% for tk in t.tickers %}
+                <span class="badge bg-success me-1">{{ tk }}</span>
+              {% endfor %}
+            </td>
+            <td>
+              {% if t.url %}
+              <a href="{{ t.url }}" target="_blank" rel="noopener"
+                 class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-box-arrow-up-right"></i>
+              </a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div id="tw-tweets-empty" class="text-center text-muted py-5">
+        <i class="bi bi-inbox fs-1 d-block mb-2"></i>本次会话尚未发现推文
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ===== 添加账号 Modal ===== -->
+<div class="modal fade" id="addAccountModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-twitter-x me-2"></i>添加 Twitter 账号</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="new-handle" class="form-label">Twitter 用户名</label>
+          <div class="input-group">
+            <span class="input-group-text">@</span>
+            <input type="text" class="form-control" id="new-handle"
+                   placeholder="elonmusk" />
+          </div>
+        </div>
+        <div class="mb-0">
+          <label for="new-name" class="form-label">显示名称（可留空）</label>
+          <input type="text" class="form-control" id="new-name" placeholder="Elon Musk" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-twitter btn-sm" onclick="addAccount()">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const STATUS_LABELS = {
+    stopped:  { cls: "status-dot--stopped"  },
+    starting: { cls: "status-dot--starting" },
+    running:  { cls: "status-dot--running"  },
+    checking: { cls: "status-dot--checking" },
+    error:    { cls: "status-dot--error"    },
+  };
+
+  async function refreshStatus() {
+    const r = await fetch("/api/twitter/status");
+    const d = await r.json();
+    const dot = document.getElementById("tw-status-dot");
+    dot.className = "status-dot " + (STATUS_LABELS[d.status]?.cls || "status-dot--stopped");
+    document.getElementById("tw-status-text").textContent = d.status_message;
+    document.getElementById("tw-last-check").textContent = d.last_check_at || "—";
+    document.getElementById("tw-next-check").textContent = d.next_check_at || "—";
+    document.getElementById("tw-tweets-total").textContent = d.tweets_total;
+    document.getElementById("btn-tw-start").disabled = d.running;
+    document.getElementById("btn-tw-stop").disabled = !d.running;
+    const ea = document.getElementById("tw-error-alert");
+    if (d.last_error && d.status === "error") {
+      document.getElementById("tw-error-text").textContent = d.last_error;
+      ea.classList.remove("d-none");
+    } else {
+      ea.classList.add("d-none");
+    }
+    // 更新推文列表
+    if (d.tweets_found && d.tweets_found.length) {
+      document.getElementById("tw-tweets-empty")?.remove();
+      const tbody = document.getElementById("tw-tweets-body");
+      if (tbody) {
+        tbody.innerHTML = [...d.tweets_found].reverse().map(t => `
+          <tr>
+            <td class="ps-3 small fw-semibold text-twitter">@${esc(t.handle)}</td>
+            <td class="small">${esc(t.content.substring(0,120))}${t.content.length>120?'…':''}</td>
+            <td>${(t.tickers||[]).map(tk=>`<span class="badge bg-success me-1">${esc(tk)}</span>`).join('')}</td>
+            <td>${t.url?`<a href="${esc(t.url)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary"><i class="bi bi-box-arrow-up-right"></i></a>`:''}</td>
+          </tr>`).join('');
+      }
+    }
+  }
+
+  async function twControl(action) {
+    document.getElementById("btn-tw-start").disabled = true;
+    document.getElementById("btn-tw-stop").disabled = true;
+    const r = await fetch(`/api/twitter/${action}`, { method: "POST" });
+    const d = await r.json();
+    if (!d.ok) alert(d.error || "操作失败");
+    await refreshStatus();
+  }
+
+  async function addAccount() {
+    const handle = document.getElementById("new-handle").value.trim().replace(/^@/, "");
+    const name   = document.getElementById("new-name").value.trim();
+    if (!handle) { alert("请输入用户名"); return; }
+    const r = await fetch("/api/publishers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "twitter", handle, name })
+    });
+    const d = await r.json();
+    if (d.ok) { location.reload(); }
+    else { alert(d.error || "添加失败"); }
+  }
+
+  async function deletePublisher(id, label) {
+    if (!confirm(`确定要删除 ${label} 及其所有数据吗？`)) return;
+    const r = await fetch(`/api/publishers/${id}`, { method: "DELETE" });
+    const d = await r.json();
+    if (d.ok) { location.reload(); }
+    else { alert(d.error || "删除失败"); }
+  }
+
+  function esc(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
+
+  setInterval(refreshStatus, 5000);
+</script>
+{% endblock %}

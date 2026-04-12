@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block title %}LinkedIn 账户管理 — 追踪器{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h3 class="mb-0">
+    <i class="bi bi-linkedin text-linkedin me-2"></i>LinkedIn 监控账户管理
+  </h3>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addAccountModal">
+    <i class="bi bi-plus-circle me-2"></i>添加账户
+  </button>
+</div>
+
+<!-- 账户列表 -->
+<div class="table-responsive">
+  <table class="table table-hover">
+    <thead class="table-light">
+      <tr>
+        <th style="width:40%">账户信息</th>
+        <th style="width:30%">显示名称</th>
+        <th style="width:15%">监控状态</th>
+        <th style="width:15%">操作</th>
+      </tr>
+    </thead>
+    <tbody id="accounts-body">
+      {% if accounts %}
+        {% for account in accounts %}
+        <tr data-profile-url="{{ account.profile_url }}">
+          <td>
+            <a href="{{ account.profile_url }}" target="_blank" rel="noopener"
+               class="text-decoration-none text-linkedin fw-semibold">
+              <i class="bi bi-link-45deg me-2"></i>
+              {{ account.profile_url.split('/')[-1] }}
+            </a>
+            <div class="small text-muted mt-1">{{ account.profile_url }}</div>
+          </td>
+          <td>
+            <span class="account-name">{{ account.name }}</span>
+          </td>
+          <td>
+            <span class="badge {% if account.check_enabled %}bg-success{% else %}bg-secondary{% endif %} account-status">
+              {% if account.check_enabled %}启用{% else %}禁用{% endif %}
+            </span>
+          </td>
+          <td>
+            <button class="btn btn-sm btn-outline-secondary" onclick="editAccount('{{ account.profile_url }}')">
+              <i class="bi bi-pencil"></i>编辑
+            </button>
+            <button class="btn btn-sm btn-outline-danger" onclick="deleteAccount('{{ account.profile_url }}')">
+              <i class="bi bi-trash"></i>删除
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr>
+          <td colspan="4" class="text-center text-muted py-5">
+            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+            还没有添加任何账户，点击"添加账户"开始
+          </td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<!-- 添加账户模态框 -->
+<div class="modal fade" id="addAccountModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">添加新的 LinkedIn 账户</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="addAccountForm">
+          <div class="mb-3">
+            <label for="addProfileUrl" class="form-label">LinkedIn 账户链接 <span class="text-danger">*</span></label>
+            <input type="url" class="form-control" id="addProfileUrl" 
+                   placeholder="https://www.linkedin.com/in/username/" required />
+            <div class="small text-muted mt-1">输入完整的 LinkedIn 个人主页 URL</div>
+          </div>
+          <div class="mb-3">
+            <label for="addDisplayName" class="form-label">显示名称</label>
+            <input type="text" class="form-control" id="addDisplayName" 
+                   placeholder="例如：张三 or 投资人名称（可选）" />
+            <div class="small text-muted mt-1">如果留空，将使用 URL 中的用户名</div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary" onclick="submitAddAccount()">添加账户</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑账户模态框 -->
+<div class="modal fade" id="editAccountModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">编辑账户</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="editAccountForm">
+          <input type="hidden" id="editProfileUrl" />
+          <div class="mb-3">
+            <label for="editDisplayName" class="form-label">显示名称</label>
+            <input type="text" class="form-control" id="editDisplayName" />
+          </div>
+          <div class="mb-3">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="editCheckEnabled" checked />
+              <label class="form-check-label" for="editCheckEnabled">
+                启用此账户的监控
+              </label>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary" onclick="submitEditAccount()">保存修改</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const addModal = new bootstrap.Modal(document.getElementById('addAccountModal'));
+  const editModal = new bootstrap.Modal(document.getElementById('editAccountModal'));
+
+  // ---------- 添加账户 ----------
+  async function submitAddAccount() {
+    const profileUrl = document.getElementById('addProfileUrl').value.trim();
+    const displayName = document.getElementById('addDisplayName').value.trim();
+
+    if (!profileUrl) {
+      alert('请输入 LinkedIn 账户链接');
+      return;
+    }
+
+    try {
+      const r = await fetch('/api/linkedin-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile_url: profileUrl,
+          display_name: displayName,
+        }),
+      });
+      const d = await r.json();
+
+      if (!d.ok) {
+        alert(d.error || '添加失败');
+        return;
+      }
+
+      alert('账户已添加');
+      document.getElementById('addAccountForm').reset();
+      addModal.hide();
+      location.reload();
+    } catch (e) {
+      alert('网络错误: ' + e);
+    }
+  }
+
+  // ---------- 编辑账户 ----------
+  function editAccount(profileUrl) {
+    const row = document.querySelector(`[data-profile-url="${escapeHtml(profileUrl)}"]`);
+    if (!row) return;
+
+    const name = row.querySelector('.account-name').textContent;
+    const enabled = row.querySelector('.account-status').classList.contains('bg-success');
+
+    document.getElementById('editProfileUrl').value = profileUrl;
+    document.getElementById('editDisplayName').value = name;
+    document.getElementById('editCheckEnabled').checked = enabled;
+    editModal.show();
+  }
+
+  async function submitEditAccount() {
+    const profileUrl = document.getElementById('editProfileUrl').value;
+    const displayName = document.getElementById('editDisplayName').value.trim();
+    const checkEnabled = document.getElementById('editCheckEnabled').checked;
+
+    try {
+      const r = await fetch(`/api/linkedin-accounts/${encodeURIComponent(profileUrl)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          display_name: displayName,
+          check_enabled: checkEnabled,
+        }),
+      });
+      const d = await r.json();
+
+      if (!d.ok) {
+        alert(d.error || '保存失败');
+        return;
+      }
+
+      alert('账户已更新');
+      editModal.hide();
+      location.reload();
+    } catch (e) {
+      alert('网络错误: ' + e);
+    }
+  }
+
+  // ---------- 删除账户 ----------
+  async function deleteAccount(profileUrl) {
+    if (!confirm('确定要删除此账户吗？')) return;
+
+    try {
+      const r = await fetch(`/api/linkedin-accounts/${encodeURIComponent(profileUrl)}`, {
+        method: 'DELETE',
+      });
+      const d = await r.json();
+
+      if (!d.ok) {
+        alert(d.error || '删除失败');
+        return;
+      }
+
+      alert('账户已删除');
+      location.reload();
+    } catch (e) {
+      alert('网络错误: ' + e);
+    }
+  }
+
+  // ---------- HTML 转义 ----------
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+</script>
+{% endblock %}

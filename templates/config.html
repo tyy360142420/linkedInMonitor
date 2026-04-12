@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}配置 — LinkedIn 动态追踪器{% endblock %}
+
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-9">
+
+    <div class="d-flex align-items-center gap-2 mb-4">
+      <i class="bi bi-gear-fill fs-4 text-linkedin"></i>
+      <h4 class="mb-0 fw-bold">参数配置</h4>
+    </div>
+
+    <form method="POST" action="{{ url_for('config_page') }}" novalidate>
+
+      <!-- ===== LinkedIn 账号 ===== -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header py-2 fw-semibold">
+          <i class="bi bi-linkedin me-2 text-linkedin"></i>LinkedIn 登录账号
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label for="LINKEDIN_EMAIL" class="form-label">
+              账号邮箱 <span class="text-danger">*</span>
+            </label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+              <input type="email" class="form-control" id="LINKEDIN_EMAIL" name="LINKEDIN_EMAIL"
+                     value="{{ cfg.LINKEDIN_EMAIL }}" placeholder="your@email.com" required />
+            </div>
+          </div>
+          <div class="mb-0">
+            <label for="LINKEDIN_PASSWORD" class="form-label">
+              账号密码 <span class="text-danger">*</span>
+            </label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-lock"></i></span>
+              <input type="password" class="form-control" id="LINKEDIN_PASSWORD" name="LINKEDIN_PASSWORD"
+                     value="{{ cfg.LINKEDIN_PASSWORD }}" placeholder="LinkedIn 登录密码" required />
+              <button class="btn btn-outline-secondary" type="button"
+                      onclick="togglePwd('LINKEDIN_PASSWORD', this)">
+                <i class="bi bi-eye"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 监控目标 ===== -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header py-2 fw-semibold">
+          <i class="bi bi-person-circle me-2 text-linkedin"></i>监控目标
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label for="TARGET_PROFILE_URL" class="form-label">
+              LinkedIn 主页 URL <span class="text-danger">*</span>
+            </label>
+            <div class="input-group">
+              <span class="input-group-text"><i class="bi bi-link-45deg"></i></span>
+              <input type="url" class="form-control" id="TARGET_PROFILE_URL" name="TARGET_PROFILE_URL"
+                     value="{{ cfg.TARGET_PROFILE_URL }}"
+                     placeholder="https://www.linkedin.com/in/username/" required />
+            </div>
+            <div class="form-text">填写要监控的 LinkedIn 用户主页完整 URL。</div>
+          </div>
+          <div class="mb-0">
+            <label for="TARGET_PROFILE_NAME" class="form-label">目标人物显示名称</label>
+            <input type="text" class="form-control" id="TARGET_PROFILE_NAME" name="TARGET_PROFILE_NAME"
+                   value="{{ cfg.TARGET_PROFILE_NAME }}"
+                   placeholder="Jane Doe（留空则使用 URL 末段作为标识）" />
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 邮件通知 ===== -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header py-2 fw-semibold">
+          <i class="bi bi-envelope-at me-2 text-linkedin"></i>邮件通知（Gmail）
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <label for="NOTIFY_EMAIL_SENDER" class="form-label">
+                发件人 Gmail <span class="text-danger">*</span>
+              </label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-send"></i></span>
+                <input type="email" class="form-control" id="NOTIFY_EMAIL_SENDER" name="NOTIFY_EMAIL_SENDER"
+                       value="{{ cfg.NOTIFY_EMAIL_SENDER }}" placeholder="sender@gmail.com" required />
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <label for="NOTIFY_EMAIL_RECIPIENT" class="form-label">
+                收件人邮箱 <span class="text-danger">*</span>
+              </label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-inbox"></i></span>
+                <input type="email" class="form-control" id="NOTIFY_EMAIL_RECIPIENT" name="NOTIFY_EMAIL_RECIPIENT"
+                       value="{{ cfg.NOTIFY_EMAIL_RECIPIENT }}" placeholder="recipient@example.com" required />
+              </div>
+            </div>
+            <div class="col-12">
+              <label for="NOTIFY_EMAIL_APP_PASSWORD" class="form-label">
+                Gmail 应用专用密码 <span class="text-danger">*</span>
+              </label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-key"></i></span>
+                <input type="password" class="form-control" id="NOTIFY_EMAIL_APP_PASSWORD"
+                       name="NOTIFY_EMAIL_APP_PASSWORD"
+                       value="{{ cfg.NOTIFY_EMAIL_APP_PASSWORD }}"
+                       placeholder="xxxx xxxx xxxx xxxx" required />
+                <button class="btn btn-outline-secondary" type="button"
+                        onclick="togglePwd('NOTIFY_EMAIL_APP_PASSWORD', this)">
+                  <i class="bi bi-eye"></i>
+                </button>
+              </div>
+              <div class="form-text">
+                在 <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">
+                Google 账号 → 安全性 → 应用专用密码
+                </a> 中生成（需要先开启两步验证）。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Twitter / X 配置 ===== -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header py-2 fw-semibold">
+          <i class="bi bi-twitter-x me-2 text-twitter"></i>Twitter / X 账号（用于监控投资人推文）
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12 col-md-6">
+              <label for="TWITTER_EMAIL" class="form-label">登录邮箱（或主登录标识）</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                <input type="text" class="form-control" id="TWITTER_EMAIL" name="TWITTER_EMAIL"
+                       value="{{ cfg.TWITTER_EMAIL }}" placeholder="your@email.com" />
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <label for="TWITTER_USERNAME" class="form-label">账号用户名（@ 后的部分）</label>
+              <div class="input-group">
+                <span class="input-group-text">@</span>
+                <input type="text" class="form-control" id="TWITTER_USERNAME" name="TWITTER_USERNAME"
+                       value="{{ cfg.TWITTER_USERNAME }}" placeholder="username" />
+              </div>
+            </div>
+            <div class="col-12 col-md-6">
+              <label for="TWITTER_PASSWORD" class="form-label">登录密码</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                <input type="password" class="form-control" id="TWITTER_PASSWORD" name="TWITTER_PASSWORD"
+                       value="{{ cfg.TWITTER_PASSWORD }}" placeholder="Twitter 密码" />
+                <button class="btn btn-outline-secondary" type="button"
+                        onclick="togglePwd('TWITTER_PASSWORD', this)">
+                  <i class="bi bi-eye"></i>
+                </button>
+              </div>
+            </div>
+            <div class="col-12 col-md-3">
+              <label for="TWITTER_CHECK_INTERVAL_MINUTES" class="form-label">检查间隔（分钟）</label>
+              <input type="number" class="form-control" id="TWITTER_CHECK_INTERVAL_MINUTES"
+                     name="TWITTER_CHECK_INTERVAL_MINUTES" min="1" max="1440"
+                     value="{{ cfg.TWITTER_CHECK_INTERVAL_MINUTES }}" />
+            </div>
+            <div class="col-12 col-md-3">
+              <label for="TWITTER_HEADLESS" class="form-label d-block">无头模式</label>
+              <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" id="TWITTER_HEADLESS" name="TWITTER_HEADLESS"
+                       {% if cfg.TWITTER_HEADLESS %}checked{% endif %} />
+                <label class="form-check-label" for="TWITTER_HEADLESS">隐藏浏览器窗口</label>
+              </div>
+            </div>
+          </div>
+          <div class="form-text mt-2">
+            启动前请先填写 Twitter 登录信息，并前往
+            <a href="{{ url_for('publishers_page') }}">发布人管理</a>页面。
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 调度设置 ===== -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header py-2 fw-semibold">
+          <i class="bi bi-clock me-2 text-linkedin"></i>调度设置
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12 col-md-4">
+              <label for="CHECK_INTERVAL_MINUTES" class="form-label">检查间隔（分钟）</label>
+              <input type="number" class="form-control" id="CHECK_INTERVAL_MINUTES"
+                     name="CHECK_INTERVAL_MINUTES" min="1" max="1440"
+                     value="{{ cfg.CHECK_INTERVAL_MINUTES }}" />
+              <div class="form-text">建议 30–120 分钟，过频可能触发 LinkedIn 风控。</div>
+            </div>
+            <div class="col-12 col-md-4">
+              <label for="SECURITY_CHALLENGE_WAIT_MINUTES" class="form-label">验证码等待（分钟）</label>
+              <input type="number" class="form-control" id="SECURITY_CHALLENGE_WAIT_MINUTES"
+                     name="SECURITY_CHALLENGE_WAIT_MINUTES" min="1" max="60"
+                     value="{{ cfg.SECURITY_CHALLENGE_WAIT_MINUTES }}" />
+              <div class="form-text">遇到人机验证时等待手动通过的最长时间。</div>
+            </div>
+            <div class="col-12 col-md-4">
+              <label for="HEADLESS" class="form-label d-block">无头模式</label>
+              <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" id="HEADLESS" name="HEADLESS"
+                       {% if cfg.HEADLESS %}checked{% endif %} />
+                <label class="form-check-label" for="HEADLESS">隐藏浏览器窗口</label>
+              </div>
+              <div class="form-text">开启后浏览器在后台静默运行（遇到验证码时需关闭以便手动操作）。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 保存按钮 -->
+      <div class="d-flex gap-2 justify-content-end mb-4">
+        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+          <i class="bi bi-arrow-left me-1"></i>返回仪表盘
+        </a>
+        <button type="submit" class="btn btn-linkedin px-4">
+          <i class="bi bi-floppy me-1"></i>保存配置
+        </button>
+      </div>
+
+      <p class="text-muted small text-end">
+        配置保存在本地 <code>config.json</code> 文件中，如追踪器正在运行请重启以生效。
+      </p>
+
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function togglePwd(fieldId, btn) {
+    const input = document.getElementById(fieldId);
+    const icon  = btn.querySelector("i");
+    if (input.type === "password") {
+      input.type = "text";
+      icon.className = "bi bi-eye-slash";
+    } else {
+      input.type = "password";
+      icon.className = "bi bi-eye";
+    }
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}发布人管理 — LinkedIn 追踪器{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div class="d-flex align-items-center gap-2">
+    <i class="bi bi-people-fill fs-4 text-linkedin"></i>
+    <h4 class="mb-0 fw-bold">发布人管理</h4>
+  </div>
+  <button class="btn btn-twitter btn-sm" data-bs-toggle="modal" data-bs-target="#addModal">
+    <i class="bi bi-plus-lg me-1"></i>添加 Twitter 账号
+  </button>
+</div>
+
+{% if publishers %}
+<div class="row g-3">
+  {% for pub in publishers %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-start gap-3 mb-3">
+          <div class="platform-icon platform-icon--{{ pub.platform }}">
+            <i class="bi bi-{{ 'linkedin' if pub.platform == 'linkedin' else 'twitter-x' }}"></i>
+          </div>
+          <div class="flex-grow-1 min-w-0">
+            <div class="fw-semibold text-truncate">{{ pub.name }}</div>
+            <div class="text-muted small">
+              {% if pub.platform == 'twitter' %}@{% endif %}{{ pub.handle }}
+            </div>
+          </div>
+          <span class="badge bg-{{ 'linkedin-badge' if pub.platform == 'linkedin' else 'twitter-badge' }}">
+            {{ pub.platform | title }}
+          </span>
+        </div>
+
+        <div class="row g-2 text-center mb-3">
+          <div class="col-6">
+            <div class="bg-light rounded py-2">
+              <div class="fw-bold fs-5">{{ pub.post_count }}</div>
+              <div class="text-muted" style="font-size:.7rem">帖子数</div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="bg-light rounded py-2">
+              <div class="fw-bold fs-5 {{ 'text-success' if pub.ticker_count > 0 else '' }}">{{ pub.ticker_count }}</div>
+              <div class="text-muted" style="font-size:.7rem">股票代码</div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="bg-light rounded py-2">
+              <div class="fw-bold fs-6 {{ 'text-success' if pub.perf_up_ratio and pub.perf_up_ratio >= 50 else 'text-muted' }}">
+                {% if pub.perf_up_ratio is not none %}
+                  {{ pub.perf_up_ratio }}%
+                {% else %}
+                  —
+                {% endif %}
+              </div>
+              <div class="text-muted" style="font-size:.7rem">上涨占比</div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="bg-light rounded py-2">
+              <div class="fw-bold fs-6 {% if pub.perf_avg_change is not none and pub.perf_avg_change > 0 %}text-success{% elif pub.perf_avg_change is not none and pub.perf_avg_change < 0 %}text-danger{% else %}text-muted{% endif %}">
+                {% if pub.perf_avg_change is not none %}
+                  {{ '+' if pub.perf_avg_change > 0 else '' }}{{ pub.perf_avg_change }}%
+                {% else %}
+                  —
+                {% endif %}
+              </div>
+              <div class="text-muted" style="font-size:.7rem">平均涨幅</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <a href="{{ url_for('publisher_detail', pub_id=pub.id) }}"
+             class="btn btn-sm btn-outline-secondary flex-fill">
+            <i class="bi bi-person-lines-fill me-1"></i>查看详情
+          </a>
+          {% if pub.platform == 'twitter' %}
+          <button class="btn btn-sm btn-outline-danger"
+                  onclick="deletePub({{ pub.id }}, '{{ pub.name }}')">
+            <i class="bi bi-trash"></i>
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="text-center text-muted py-5">
+  <i class="bi bi-people fs-1 d-block mb-3"></i>
+  <p>还没有发布人记录。</p>
+  <p class="small">启动 LinkedIn 追踪器后会自动注册 LinkedIn 目标；<br>
+  点击上方按钮可手动添加 Twitter 账号。</p>
+</div>
+{% endif %}
+
+<!-- 添加账号 Modal -->
+<div class="modal fade" id="addModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-twitter-x me-2"></i>添加 Twitter 账号</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="add-handle" class="form-label">Twitter 用户名</label>
+          <div class="input-group">
+            <span class="input-group-text">@</span>
+            <input type="text" class="form-control" id="add-handle" placeholder="username"/>
+          </div>
+        </div>
+        <div>
+          <label for="add-name" class="form-label">显示名称（可留空）</label>
+          <input type="text" class="form-control" id="add-name" placeholder="真实姓名"/>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-twitter btn-sm" onclick="addPublisher()">添加</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function addPublisher() {
+    const handle = document.getElementById("add-handle").value.trim().replace(/^@/, "");
+    const name   = document.getElementById("add-name").value.trim();
+    if (!handle) { alert("请输入用户名"); return; }
+    const r = await fetch("/api/publishers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "twitter", handle, name })
+    });
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert(d.error || "添加失败");
+  }
+
+  async function deletePub(id, label) {
+    if (!confirm(`确定要删除「${label}」及其所有数据（帖子、股票记录）吗？此操作不可撤销。`)) return;
+    const r = await fetch(`/api/publishers/${id}`, { method: "DELETE" });
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert(d.error || "删除失败");
+  }
+</script>
+{% endblock %}
