@@ -12692,3 +12692,7 @@ Stacktrace:
 2026-04-12 14:18:43,743 [INFO] werkzeug - 127.0.0.1 - - [12/Apr/2026 14:18:43] "GET /api/twitter/status HTTP/1.1" 200 -
 2026-04-12 14:18:48,734 [INFO] werkzeug - 127.0.0.1 - - [12/Apr/2026 14:18:48] "GET /api/twitter/status HTTP/1.1" 200 -
 2026-04-12 14:18:53,744 [INFO] werkzeug - 127.0.0.1 - - [12/Apr/2026 14:18:53] "GET /api/twitter/status HTTP/1.1" 200 -
+2026-04-12 15:05:46,204 [INFO] __main__ - LinkedIn 追踪器 Web 界面已启动，访问 http://localhost:5000
+2026-04-12 15:05:46,297 [INFO] werkzeug - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-04-12 15:05:46,297 [INFO] werkzeug - [33mPress CTRL+C to quit[0m
