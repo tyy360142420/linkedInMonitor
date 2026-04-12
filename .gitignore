@@ -1,0 +1,30 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
+# ===== 运行时数据 =====
+tracker.db
+tracker.log
+*.db
+*.log
+
+# ===== 浏览器 Profile（登录会话） =====
+.edge_profile*/
+.chrome_profile*/
+
+# ===== 构建产物 =====
+build/
+dist/
+*.spec
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini

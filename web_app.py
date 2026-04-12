@@ -4,7 +4,7 @@ Flask Web 应用入口：LinkedIn + Twitter 双平台追踪、股票看板、笔
 
 启动方式:
     python web_app.py
-然后在浏览器中访问 http://localhost:5000
+然后在浏览器中访问 http://localhost:5001
 """
 
 import logging
@@ -155,6 +155,10 @@ def config_page():
             "TWITTER_PASSWORD": request.form.get("TWITTER_PASSWORD", "").strip(),
             "TWITTER_CHECK_INTERVAL_MINUTES": max(
                 1, int(request.form.get("TWITTER_CHECK_INTERVAL_MINUTES", 60) or 60)
+            ),
+            "TWITTER_CHALLENGE_WAIT_MINUTES": max(
+                1,
+                int(request.form.get("TWITTER_CHALLENGE_WAIT_MINUTES", 5) or 5),
             ),
             "TWITTER_HEADLESS": tw_headless_val,
         }
@@ -473,5 +477,10 @@ def api_delete_note(note_id: int):
 
 
 if __name__ == "__main__":
-    logger.info("LinkedIn 追踪器 Web 界面已启动，访问 http://localhost:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    host = os.getenv("WEB_HOST", "127.0.0.1")
+    try:
+        port = int(os.getenv("WEB_PORT", "5001"))
+    except ValueError:
+        port = 5001
+    logger.info("LinkedIn 追踪器 Web 界面已启动，访问 http://localhost:%s", port)
+    app.run(host=host, port=port, debug=False, threaded=True)
