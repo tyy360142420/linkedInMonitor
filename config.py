@@ -20,16 +20,18 @@ _DEFAULTS: Dict[str, object] = {
     "NOTIFY_EMAIL_APP_PASSWORD": "",
     "NOTIFY_EMAIL_RECIPIENT": "",
     "CHECK_INTERVAL_MINUTES": 60,
+    "LINKEDIN_LOOKBACK_DAYS": 30,
     "HEADLESS": False,
     "SECURITY_CHALLENGE_WAIT_MINUTES": 8,
     "SESSION_PROFILE_DIR": os.path.join(APP_DIR, ".edge_profile"),
-    "LINKEDIN_ACCOUNTS": [],            # 多账户: [{"profile_url": "...", "name": "...", "check_enabled": bool}]
+    "LINKEDIN_ACCOUNTS": [],
     # Twitter / X
     "TWITTER_EMAIL": "",
     "TWITTER_USERNAME": "",             # @ 用户名（不含 @）
     "TWITTER_PASSWORD": "",
     "TWITTER_HEADLESS": False,
     "TWITTER_CHECK_INTERVAL_MINUTES": 60,
+    "TWITTER_LOOKBACK_DAYS": 30,
     "TWITTER_CHALLENGE_WAIT_MINUTES": 5,
     "TWITTER_SESSION_PROFILE_DIR": os.path.join(APP_DIR, ".edge_profile_twitter"),
 }
@@ -84,9 +86,11 @@ NOTIFY_EMAIL_SENDER: str = str(_cfg["NOTIFY_EMAIL_SENDER"])
 NOTIFY_EMAIL_APP_PASSWORD: str = str(_cfg["NOTIFY_EMAIL_APP_PASSWORD"])
 NOTIFY_EMAIL_RECIPIENT: str = str(_cfg["NOTIFY_EMAIL_RECIPIENT"])
 CHECK_INTERVAL_MINUTES: int = int(_cfg["CHECK_INTERVAL_MINUTES"])
+LINKEDIN_LOOKBACK_DAYS: int = int(_cfg["LINKEDIN_LOOKBACK_DAYS"])
 HEADLESS: bool = bool(_cfg["HEADLESS"])
 SECURITY_CHALLENGE_WAIT_MINUTES: int = int(_cfg["SECURITY_CHALLENGE_WAIT_MINUTES"])
 SESSION_PROFILE_DIR: str = str(_cfg["SESSION_PROFILE_DIR"])
+TWITTER_LOOKBACK_DAYS: int = int(_cfg["TWITTER_LOOKBACK_DAYS"])
 
 
 # ------------------------------------------------------------------ #

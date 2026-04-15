@@ -167,7 +167,10 @@ class TrackerRunner:
         logger.info("▶ 开始检查新动态")
 
         try:
-            posts = self._scraper.get_recent_posts(str(cfg["TARGET_PROFILE_URL"]))
+            posts = self._scraper.get_recent_posts(
+                str(cfg["TARGET_PROFILE_URL"]),
+                lookback_days=int(cfg.get("LINKEDIN_LOOKBACK_DAYS", 30)),
+            )
         except Exception as exc:
             logger.error("抓取失败: %s", exc)
             self.last_error = f"抓取失败: {exc}"
@@ -210,35 +213,39 @@ class TrackerRunner:
     def _record_posts(self, posts, is_new: bool) -> None:
         """将帖子存入数据库并追加到内存列表，最多保留最近 200 条。"""
         for p in posts:
-            # 持久化到数据库
-            if self._publisher_id is not None:
-                db_post_id = db.insert_post(
-                    publisher_id=self._publisher_id,
-                    platform="linkedin",
-                    post_id=p.post_id,
-                    content=p.content or "",
-                    post_time=p.timestamp or "",
-                    url=p.url or "",
-                )
-                if db_post_id:
-                    tickers = stock_data.extract_tickers(p.content or "")
-                    for ticker in tickers:
-                        db.insert_stock_mention(
-                            db_post_id, self._publisher_id, ticker
-                        )
-
-            # 内存缓存（供仪表盘实时展示）
-            self.posts_found.append(
-                {
-                    "post_id": p.post_id,
-                    "content": (p.content[:300] if p.content else "（无正文）"),
-                    "timestamp": p.timestamp or "",
-                    "url": p.url or "",
-                    "found_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "is_new": is_new,
-                }
-            )
+            self._store_post(p)
+            self._cache_post(p, is_new)
         self.posts_found = self.posts_found[-200:]
+
+    def _store_post(self, post) -> None:
+        if self._publisher_id is None:
+            return
+
+        db_post_id = db.insert_post(
+            publisher_id=self._publisher_id,
+            platform="linkedin",
+            post_id=post.post_id,
+            content=post.content or "",
+            post_time=post.timestamp or "",
+            url=post.url or "",
+        )
+        if not db_post_id:
+            return
+
+        for ticker in stock_data.extract_tickers(post.content or ""):
+            db.insert_stock_mention(db_post_id, self._publisher_id, ticker)
+
+    def _cache_post(self, post, is_new: bool) -> None:
+        self.posts_found.append(
+            {
+                "post_id": post.post_id,
+                "content": (post.content[:300] if post.content else "（无正文）"),
+                "timestamp": post.timestamp or "",
+                "url": post.url or "",
+                "found_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "is_new": is_new,
+            }
+        )
 
     def _set_error(self, message: str) -> None:
         self.status = "error"

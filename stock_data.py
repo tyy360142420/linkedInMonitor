@@ -7,9 +7,12 @@ stock_data.py
 
 import re
 import logging
+import json
 from datetime import datetime, timedelta
 from collections import Counter
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
 from typing import Dict, List
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,12 @@ _STOP_WORDS = {
     "HIM", "HIS", "HOW", "ITS", "LET", "MAY", "NEW", "NOT",
     "NOW", "OUR", "OUT", "OWN", "SAY", "SEE", "SHE", "TOO",
     "TWO", "WAS", "WAY", "WHO", "WHY", "YOU",
+}
+
+# 常见加密资产代码，yfinance 通常需要加上 -USD 后缀
+_CRYPTO_SYMBOLS = {
+    "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "AVAX", "DOT", "MATIC",
+    "LTC", "LINK", "ATOM", "ARB", "OP", "NEAR", "APT", "SUI", "TAO",
 }
 
 _EVENT_RULES = [
@@ -53,6 +62,114 @@ def extract_tickers(text: str) -> List[str]:
             seen.add(t)
             result.append(t)
     return result
+
+
+def _ticker_candidates(ticker: str) -> List[str]:
+    """返回 yfinance 可尝试的 ticker 形态。"""
+    t = (ticker or "").upper().strip()
+    if not t:
+        return []
+    if "-" in t:
+        return [t]
+    candidates = [t]
+    if t in _CRYPTO_SYMBOLS:
+        candidates.append(f"{t}-USD")
+    return candidates
+
+
+def _http_get_json(url: str, timeout: int = 10) -> Dict:
+    req = Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+        },
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _yahoo_chart_fallback(symbol: str, period: str) -> Dict | None:
+    """通过 Yahoo chart 接口获取价格，用于 yfinance 限流时兜底。"""
+    try:
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+            f"?range={period}&interval=1d"
+        )
+        payload = _http_get_json(url)
+        result = (payload.get("chart", {}).get("result") or [None])[0]
+        if not result:
+            return None
+
+        quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+        closes_raw = quote.get("close") or []
+        timestamps = result.get("timestamp") or []
+        if not closes_raw or not timestamps:
+            return None
+
+        points = []
+        for ts, c in zip(timestamps, closes_raw):
+            if c is None:
+                continue
+            points.append((datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d"), round(float(c), 2)))
+        if not points:
+            return None
+
+        meta = result.get("meta") or {}
+        closes = [p[1] for p in points]
+        current_price = meta.get("regularMarketPrice") or closes[-1]
+        previous_close = meta.get("previousClose") or (closes[-2] if len(closes) > 1 else None)
+        change_pct = None
+        if current_price and previous_close and previous_close != 0:
+            change_pct = round((float(current_price) - float(previous_close)) / float(previous_close) * 100, 2)
+
+        return {
+            "name": meta.get("shortName") or symbol,
+            "currency": meta.get("currency") or "USD",
+            "current_price": float(current_price) if current_price is not None else None,
+            "change_pct": change_pct,
+            "dates": [p[0] for p in points],
+            "closes": closes,
+        }
+    except Exception:
+        return None
+
+
+def _yahoo_news_fallback(query: str, limit: int) -> List[Dict]:
+    """通过 Yahoo search 接口获取新闻兜底。"""
+    try:
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={quote_plus(query)}"
+        payload = _http_get_json(url)
+        raw_news = payload.get("news") or []
+        out = []
+        for item in raw_news:
+            title = item.get("title") or ""
+            if not title:
+                continue
+            ts = item.get("providerPublishTime")
+            if not ts:
+                continue
+            dt = datetime.fromtimestamp(int(ts))
+            out.append(
+                {
+                    "title": title,
+                    "url": item.get("link") or "",
+                    "source": item.get("publisher") or "Yahoo",
+                    "published_at": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "event_type": classify_event_type(title),
+                }
+            )
+        out.sort(key=lambda x: x["published_at"], reverse=True)
+        return out[:limit]
+    except Exception:
+        return []
 
 
 # ------------------------------------------------------------------ #
@@ -87,40 +204,75 @@ def get_price_history(ticker: str, period: str = "3mo") -> Dict:
         "error": None,
     }
     try:
+        # 加密代码优先走 Yahoo chart，避免 yfinance 对 crypto 频繁限流。
+        if ticker in _CRYPTO_SYMBOLS:
+            for symbol in _ticker_candidates(ticker):
+                fb = _yahoo_chart_fallback(symbol, period)
+                if fb:
+                    base["name"] = fb["name"]
+                    base["currency"] = fb["currency"]
+                    base["current_price"] = fb["current_price"]
+                    base["change_pct"] = fb["change_pct"]
+                    base["dates"] = fb["dates"]
+                    base["closes"] = fb["closes"]
+                    return base
+
         import yfinance as yf  # 延迟导入，避免启动时报错
+        last_err = None
+        for symbol in _ticker_candidates(ticker):
+            try:
+                stock = yf.Ticker(symbol)
+                hist = stock.history(period=period)
+            except Exception as exc:
+                last_err = str(exc)
+                continue
 
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period=period)
+            if hist.empty:
+                continue
 
-        if hist.empty:
-            base["error"] = f"没有找到 {ticker} 的历史数据，请确认代码正确"
+            base["dates"] = hist.index.strftime("%Y-%m-%d").tolist()
+            base["closes"] = [round(float(c), 2) for c in hist["Close"].tolist()]
+
+            # 尝试获取详细信息（可能因网络超时失败）
+            try:
+                info = stock.info or {}
+            except Exception:
+                info = {}
+
+            base["name"] = info.get("longName") or info.get("shortName") or symbol
+            base["currency"] = info.get("currency", "USD")
+
+            cp = (
+                info.get("currentPrice")
+                or info.get("regularMarketPrice")
+                or (base["closes"][-1] if base["closes"] else None)
+            )
+            base["current_price"] = cp
+
+            pc = info.get("previousClose") or (
+                base["closes"][-2] if len(base["closes"]) > 1 else None
+            )
+            if cp and pc and pc != 0:
+                base["change_pct"] = round((cp - pc) / pc * 100, 2)
+
             return base
 
-        base["dates"] = hist.index.strftime("%Y-%m-%d").tolist()
-        base["closes"] = [round(float(c), 2) for c in hist["Close"].tolist()]
+        # yfinance 限流时尝试 Yahoo chart 兜底
+        for symbol in _ticker_candidates(ticker):
+            fb = _yahoo_chart_fallback(symbol, period)
+            if fb:
+                base["name"] = fb["name"]
+                base["currency"] = fb["currency"]
+                base["current_price"] = fb["current_price"]
+                base["change_pct"] = fb["change_pct"]
+                base["dates"] = fb["dates"]
+                base["closes"] = fb["closes"]
+                return base
 
-        # 尝试获取详细信息（可能因网络超时失败）
-        try:
-            info = stock.info or {}
-        except Exception:
-            info = {}
-
-        base["name"] = info.get("longName") or info.get("shortName") or ticker
-        base["currency"] = info.get("currency", "USD")
-
-        cp = (
-            info.get("currentPrice")
-            or info.get("regularMarketPrice")
-            or (base["closes"][-1] if base["closes"] else None)
-        )
-        base["current_price"] = cp
-
-        pc = info.get("previousClose") or (
-            base["closes"][-2] if len(base["closes"]) > 1 else None
-        )
-        if cp and pc and pc != 0:
-            base["change_pct"] = round((cp - pc) / pc * 100, 2)
-
+        if last_err and "too many requests" in last_err.lower():
+            base["error"] = "行情接口限流，请稍后重试"
+        else:
+            base["error"] = f"没有找到 {ticker} 的历史数据，请确认代码正确"
         return base
 
     except ImportError:
@@ -166,13 +318,26 @@ def get_change_since_date(ticker: str, since_date: str) -> Dict:
         start_dt = datetime.strptime(since_str, "%Y-%m-%d")
         end_dt = datetime.now() + timedelta(days=1)
 
-        hist = yf.Ticker(ticker).history(
-            start=start_dt.strftime("%Y-%m-%d"),
-            end=end_dt.strftime("%Y-%m-%d"),
-        )
+        hist = None
+        last_err = None
+        for symbol in _ticker_candidates(ticker):
+            try:
+                cand_hist = yf.Ticker(symbol).history(
+                    start=start_dt.strftime("%Y-%m-%d"),
+                    end=end_dt.strftime("%Y-%m-%d"),
+                )
+            except Exception as exc:
+                last_err = str(exc)
+                continue
+            if not cand_hist.empty:
+                hist = cand_hist
+                break
 
-        if hist.empty:
-            out["error"] = "无可用历史数据"
+        if hist is None or hist.empty:
+            if last_err and "too many requests" in last_err.lower():
+                out["error"] = "行情接口限流，请稍后重试"
+            else:
+                out["error"] = "无可用历史数据"
             return out
 
         closes = hist["Close"].dropna().tolist()
@@ -359,14 +524,34 @@ def get_stock_news(ticker: str, limit: int = 12) -> List[Dict]:
     """获取股票简讯，输出标准化字段用于时间轴展示。"""
     ticker = ticker.upper()
     try:
+        # 加密代码优先走 Yahoo search，减少 yfinance 限流影响。
+        if ticker in _CRYPTO_SYMBOLS:
+            result = _yahoo_news_fallback(ticker, limit=limit)
+            result = _calc_news_impacts(ticker, result, horizon_days=3)
+            result.sort(key=lambda x: x["published_at"], reverse=True)
+            return result[:limit]
+
         import yfinance as yf
 
-        raw_items = yf.Ticker(ticker).news or []
         result = []
-        for item in raw_items:
-            normalized = _normalize_news_item(item)
-            if normalized is not None:
-                result.append(normalized)
+        for symbol in _ticker_candidates(ticker):
+            raw_items = yf.Ticker(symbol).news or []
+            for item in raw_items:
+                normalized = _normalize_news_item(item)
+                if normalized is not None:
+                    result.append(normalized)
+            if result:
+                break
+
+        # 去重（同标题+时间）
+        uniq = {}
+        for n in result:
+            uniq[(n.get("title"), n.get("published_at"))] = n
+        result = list(uniq.values())
+
+        if not result:
+            # yfinance 无结果或被限流时，走 Yahoo search 兜底
+            result = _yahoo_news_fallback(ticker, limit=limit)
 
         result = _calc_news_impacts(ticker, result, horizon_days=3)
 

@@ -35,6 +35,7 @@ class TwitterRunner:
         self.last_check_at: Optional[datetime] = None
         self.tweets_found: List[Dict] = []
         self.last_error: str = ""
+        self.cooldown_until: Optional[datetime] = None
 
     # ------------------------------------------------------------------ #
     # 公开控制接口
@@ -43,6 +44,12 @@ class TwitterRunner:
     def start(self) -> bool:
         with self._lock:
             if self._thread and self._thread.is_alive():
+                return False
+            if self.cooldown_until and datetime.now() < self.cooldown_until:
+                remaining = int((self.cooldown_until - datetime.now()).total_seconds() // 60) + 1
+                self.last_error = f"Twitter 登录被风控限制，请约 {remaining} 分钟后重试。"
+                self.status = "error"
+                self.status_message = self.last_error
                 return False
             self._stop_event.clear()
             self._thread = threading.Thread(
@@ -60,12 +67,21 @@ class TwitterRunner:
                 except Exception:
                     pass
                 self._scraper = None
+            thread = self._thread
+        if thread and thread.is_alive():
+            thread.join(timeout=2)
+        if thread and not thread.is_alive():
+            self._thread = None
         self.status = "stopped"
         self.status_message = "Twitter 追踪器已停止"
         self.next_check_at = None
 
     def is_running(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        return (
+            self._thread is not None
+            and self._thread.is_alive()
+            and not self._stop_event.is_set()
+        )
 
     def get_state(self) -> Dict:
         return {
@@ -85,6 +101,11 @@ class TwitterRunner:
             "tweets_found": self.tweets_found[-20:],
             "tweets_total": len(self.tweets_found),
             "last_error": self.last_error,
+            "cooldown_until": (
+                self.cooldown_until.strftime("%Y-%m-%d %H:%M:%S")
+                if self.cooldown_until
+                else None
+            ),
         }
 
     # ------------------------------------------------------------------ #
@@ -138,6 +159,9 @@ class TwitterRunner:
         self.status = "stopped"
         self.status_message = "Twitter 追踪器已停止"
         self.next_check_at = None
+        with self._lock:
+            self._scraper = None
+            self._thread = None
 
     def _init_logged_in_scraper(self, cfg: Dict) -> bool:
         """初始化 scraper 并完成登录。"""
@@ -159,13 +183,17 @@ class TwitterRunner:
             )
             scraper._init_driver()
             if not scraper.login():
-                self._set_error(
-                    "Twitter 登录失败，请检查账号密码或手动完成验证。"
-                )
+                specific_msg = scraper.last_login_error or "Twitter 登录失败，请检查账号密码或手动完成验证。"
+                lowered = specific_msg.lower()
+                if "399" in lowered or "could not log you in now" in lowered or "请稍后再试" in specific_msg:
+                    self._set_cooldown_error(specific_msg, minutes=30)
+                else:
+                    self._set_error(specific_msg)
                 scraper.close()
                 return False
             with self._lock:
                 self._scraper = scraper
+            self.cooldown_until = None
             return True
         except Exception as exc:
             self._set_error(f"Twitter 浏览器启动失败: {exc}")
@@ -191,7 +219,10 @@ class TwitterRunner:
         logger.info("▶ 开始抓取 @%s", handle)
 
         try:
-            tweets = self._scraper.get_recent_tweets(handle)
+            tweets = self._scraper.get_recent_tweets(
+                handle,
+                lookback_days=int(cfg_module.get_all().get("TWITTER_LOOKBACK_DAYS", 30)),
+            )
         except Exception as exc:
             logger.error("抓取 @%s 失败: %s", handle, exc)
             self.last_error = f"抓取 @{handle} 失败: {exc}"
@@ -233,6 +264,14 @@ class TwitterRunner:
         return [p for p in db.get_publishers() if p["platform"] == "twitter"]
 
     def _set_error(self, msg: str) -> None:
+        self.status = "error"
+        self.last_error = msg
+        self.status_message = msg
+        logger.error(msg)
+
+    def _set_cooldown_error(self, reason: str, minutes: int) -> None:
+        self.cooldown_until = datetime.now() + timedelta(minutes=minutes)
+        msg = f"{reason} 已进入冷却期（{minutes} 分钟）。"
         self.status = "error"
         self.last_error = msg
         self.status_message = msg

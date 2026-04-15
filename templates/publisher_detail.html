@@ -160,8 +160,8 @@
               {% endif %}
             </div>
             <div class="btn-group btn-group-sm period-btns" data-ticker="{{ s.ticker }}">
-              <button class="btn btn-outline-secondary active" data-period="1mo">1M</button>
-              <button class="btn btn-outline-secondary" data-period="3mo">3M</button>
+              <button class="btn btn-outline-secondary" data-period="1mo">1M</button>
+              <button class="btn btn-outline-secondary active" data-period="3mo">3M</button>
               <button class="btn btn-outline-secondary" data-period="6mo">6M</button>
               <button class="btn btn-outline-secondary" data-period="1y">1Y</button>
             </div>
@@ -293,7 +293,7 @@
   /* ===== 图表 ===== */
   const charts = {};
 
-  async function loadChart(ticker, period = "1mo") {
+  async function loadChart(ticker, period = "3mo") {
     const r = await fetch(`/api/stock/${ticker}/history?period=${period}`);
     const d = await r.json();
 
@@ -366,7 +366,7 @@
   // 切换到 Tab 2 时加载图表
   document.querySelector('[href="#tab-stocks"]')?.addEventListener("shown.bs.tab", () => {
     document.querySelectorAll(".period-btns").forEach(g => {
-      loadChart(g.dataset.ticker, "1mo");
+      loadChart(g.dataset.ticker, "3mo");
     });
   });
 

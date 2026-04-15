@@ -6,9 +6,11 @@ scraper.py
 import hashlib
 import logging
 import os
+import re
 import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 
 from selenium import webdriver
@@ -24,6 +26,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 logger = logging.getLogger(__name__)
+
+_EDGE_EXE = "msedge.exe"
+_RELATIVE_MINUTE_UNITS = {"min", "mins", "minute", "minutes", "m", "分钟", "分"}
+_RELATIVE_HOUR_UNITS = {"hour", "hours", "hr", "hrs", "h", "小时", "时"}
+_RELATIVE_DAY_UNITS = {"day", "days", "d", "天"}
+_RELATIVE_WEEK_UNITS = {"wk", "wks", "week", "weeks", "w", "周"}
+_RELATIVE_MONTH_UNITS = {"mo", "mon", "mons", "month", "months", "个月", "月"}
+_RELATIVE_YEAR_UNITS = {"yr", "yrs", "year", "years", "y"}
 
 # LinkedIn CSS 选择器（多个备用，应对页面结构变化）
 _POST_CONTAINERS = [
@@ -105,81 +115,95 @@ class LinkedInScraper:
         logger.info("正在登录 LinkedIn …")
         for attempt in (1, 2):
             try:
-                self._navigate(self._LOGIN_URL)
-                time.sleep(2)
-
-                if self._is_logged_in_url(self._driver.current_url):
-                    logger.info("检测到已存在登录会话，跳过账号密码输入")
-                    return True
-
-                wait = self._wait
-
-                # 等待登录表单出现，或 LinkedIn 直接跳转到已登录页面
-                def _login_form_or_redirect(driver):
-                    if self._is_logged_in_url(driver.current_url):
-                        return "already_logged_in"
-                    els = driver.find_elements(By.ID, "username")
-                    return els[0] if els else False
-
-                result = wait.until(_login_form_or_redirect)
-                if result == "already_logged_in":
-                    logger.info("检测到已存在登录会话，跳过账号密码输入")
-                    return True
-                email_field = result
-                email_field.clear()
-                email_field.send_keys(self.email)
-
-                pwd_field = self._driver.find_element(By.ID, "password")
-                pwd_field.clear()
-                pwd_field.send_keys(self.password)
-
-                submit = self._driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
-                submit.click()
-
-                # 等待页面跳转
-                time.sleep(5)
-
-                url = self._driver.current_url
-                if self._is_challenge_url(url):
-                    if not self._wait_for_challenge_resolution():
-                        logger.error("安全验证未在规定时间内完成")
-                        return False
-                    url = self._driver.current_url
-
-                if self._is_logged_in_url(url):
-                    logger.info("登录成功")
-                    return True
-
-                logger.error("登录失败，当前页面: %s", url)
-                return False
-
-            except NoSuchWindowException:
-                if attempt == 1:
-                    logger.warning("浏览器窗口意外关闭，正在重启并重试登录一次")
-                    self.close()
-                    self._init_driver()
-                    continue
-                logger.error("浏览器窗口连续关闭，登录失败")
-                return False
-            except TimeoutException:
-                logger.error("登录超时，请检查网络或账号信息")
-                return False
-            except WebDriverException as exc:
-                if self._is_detached_frame_error(exc) and attempt == 1:
-                    logger.warning("登录页标签失去连接，正在恢复浏览器后重试一次")
-                    self._recover_primary_window()
-                    continue
-                logger.error("登录过程发生浏览器错误: %s", exc, exc_info=True)
-                return False
+                return self._login_once()
             except Exception as exc:
-                logger.error("登录过程发生意外错误: %s", exc, exc_info=True)
+                if self._handle_login_exception(exc, attempt):
+                    continue
                 return False
 
         return False
 
-    def get_recent_posts(self, profile_url: str) -> List[Post]:
+    def _handle_login_exception(self, exc: Exception, attempt: int) -> bool:
+        if isinstance(exc, NoSuchWindowException):
+            if attempt == 1:
+                logger.warning("浏览器窗口意外关闭，正在重启并重试登录一次")
+                self.close()
+                self._init_driver()
+                return True
+            logger.error("浏览器窗口连续关闭，登录失败")
+            return False
+
+        if isinstance(exc, TimeoutException):
+            logger.error("登录超时，请检查网络或账号信息")
+            return False
+
+        if isinstance(exc, WebDriverException):
+            if self._is_detached_frame_error(exc) and attempt == 1:
+                logger.warning("登录页标签失去连接，正在恢复浏览器后重试一次")
+                self._recover_primary_window()
+                return True
+            logger.error("登录过程发生浏览器错误: %s", exc, exc_info=True)
+            return False
+
+        logger.error("登录过程发生意外错误: %s", exc, exc_info=True)
+        return False
+
+    def _login_once(self) -> bool:
+        self._navigate(self._LOGIN_URL)
+        time.sleep(2)
+
+        if self._is_logged_in_url(self._driver.current_url):
+            logger.info("检测到已存在登录会话，跳过账号密码输入")
+            return True
+
+        email_field = self._wait_for_login_form_or_redirect()
+        if email_field == "already_logged_in":
+            logger.info("检测到已存在登录会话，跳过账号密码输入")
+            return True
+
+        self._submit_login_credentials(email_field)
+        return self._complete_login_after_submit()
+
+    def _wait_for_login_form_or_redirect(self):
+        def _login_form_or_redirect(driver):
+            if self._is_logged_in_url(driver.current_url):
+                return "already_logged_in"
+            els = driver.find_elements(By.ID, "username")
+            return els[0] if els else False
+
+        return self._wait.until(_login_form_or_redirect)
+
+    def _submit_login_credentials(self, email_field) -> None:
+        email_field.clear()
+        email_field.send_keys(self.email)
+
+        pwd_field = self._driver.find_element(By.ID, "password")
+        pwd_field.clear()
+        pwd_field.send_keys(self.password)
+
+        submit = self._driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
+        submit.click()
+
+    def _complete_login_after_submit(self) -> bool:
+        time.sleep(5)
+        url = self._driver.current_url
+
+        if self._is_challenge_url(url):
+            if not self._wait_for_challenge_resolution():
+                logger.error("安全验证未在规定时间内完成")
+                return False
+            url = self._driver.current_url
+
+        if self._is_logged_in_url(url):
+            logger.info("登录成功")
+            return True
+
+        logger.error("登录失败，当前页面: %s", url)
+        return False
+
+    def get_recent_posts(self, profile_url: str, lookback_days: int = 30) -> List[Post]:
         """
-        抓取指定用户主页的最新帖子（最多 10 条）。
+        抓取指定用户主页在最近时间窗口内的帖子。
         注意：可能受到对方隐私设置限制。
         """
         base = profile_url.rstrip("/")
@@ -190,14 +214,13 @@ class LinkedInScraper:
             self._navigate(activity_url)
             time.sleep(4)
 
-            # 滚动触发懒加载
-            self._driver.execute_script(
-                "window.scrollTo(0, Math.round(document.body.scrollHeight * 0.4))"
-            )
-            time.sleep(2)
+            # 多滚动几轮，尽量覆盖整个时间窗口，而不是只拿首屏几条。
+            for _ in range(5):
+                self._driver.execute_script("window.scrollBy(0, 1400)")
+                time.sleep(1.5)
 
-            posts = self._extract_posts()
-            logger.info("共抓取到 %d 条帖子", len(posts))
+            posts = self._extract_posts(lookback_days=lookback_days)
+            logger.info("共抓取到 %d 条最近 %d 天帖子", len(posts), lookback_days)
             return posts
 
         except Exception as exc:
@@ -263,7 +286,7 @@ class LinkedInScraper:
         self._close_extra_windows(self._primary_window_handle)
 
     def _close_extra_windows(self, keep_handle: str) -> None:
-        for handle in list(self._driver.window_handles):
+        for handle in self._driver.window_handles:
             if handle == keep_handle:
                 continue
             try:
@@ -359,22 +382,22 @@ class LinkedInScraper:
         candidates = [
             os.environ.get("EDGE_BINARY"),
             shutil.which("msedge"),
-            shutil.which("msedge.exe"),
+            shutil.which(_EDGE_EXE),
             os.path.join(
                 os.environ.get("PROGRAMW6432", ""),
-                "Microsoft", "Edge", "Application", "msedge.exe",
+                "Microsoft", "Edge", "Application", _EDGE_EXE,
             ),
             os.path.join(
                 os.environ.get("PROGRAMFILES", ""),
-                "Microsoft", "Edge", "Application", "msedge.exe",
+                "Microsoft", "Edge", "Application", _EDGE_EXE,
             ),
             os.path.join(
                 os.environ.get("PROGRAMFILES(X86)", ""),
-                "Microsoft", "Edge", "Application", "msedge.exe",
+                "Microsoft", "Edge", "Application", _EDGE_EXE,
             ),
             os.path.join(
                 os.environ.get("LOCALAPPDATA", ""),
-                "Microsoft", "Edge", "Application", "msedge.exe",
+                "Microsoft", "Edge", "Application", _EDGE_EXE,
             ),
         ]
         for path in candidates:
@@ -382,9 +405,11 @@ class LinkedInScraper:
                 return path
         return None
 
-    def _extract_posts(self) -> List[Post]:
+    def _extract_posts(self, lookback_days: int = 30, max_candidates: int = 80) -> List[Post]:
         """在当前页面中查找并解析帖子元素。"""
         posts: List[Post] = []
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(lookback_days, 1))
+        seen_ids = set()
 
         # 尝试各备用选择器，找到第一个有结果的
         container_selector = None
@@ -399,67 +424,78 @@ class LinkedInScraper:
             return posts
 
         elements = self._driver.find_elements(By.CSS_SELECTOR, container_selector)
-        for elem in elements[:10]:
+        for elem in elements[:max_candidates]:
             try:
                 post = self._parse_element(elem)
-                if post:
-                    posts.append(post)
+                if not post or post.post_id in seen_ids:
+                    continue
+                parsed_at = self._parse_timestamp(post.timestamp)
+                if parsed_at and parsed_at < cutoff:
+                    continue
+                seen_ids.add(post.post_id)
+                posts.append(post)
             except Exception as exc:
                 logger.debug("解析帖子元素异常: %s", exc)
 
         return posts
 
+    @staticmethod
+    def _parse_timestamp(raw_value: str) -> Optional[datetime]:
+        raw = (raw_value or "").strip()
+        if not raw:
+            return None
+
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            pass
+
+        lowered = raw.lower().replace("ago", "").replace("·", " ").strip()
+        compact = lowered.replace(" ", "")
+        now = datetime.now(timezone.utc)
+
+        split_index = LinkedInScraper._first_non_digit_index(compact)
+        if split_index <= 0:
+            return None
+
+        num = int(compact[:split_index])
+        unit = compact[split_index:]
+        if unit in _RELATIVE_MINUTE_UNITS:
+            return now - timedelta(minutes=num)
+        if unit in _RELATIVE_HOUR_UNITS:
+            return now - timedelta(hours=num)
+        if unit in _RELATIVE_DAY_UNITS:
+            return now - timedelta(days=num)
+        if unit in _RELATIVE_WEEK_UNITS:
+            return now - timedelta(weeks=num)
+        if unit in _RELATIVE_MONTH_UNITS:
+            return now - timedelta(days=30 * num)
+        if unit in _RELATIVE_YEAR_UNITS:
+            return now - timedelta(days=365 * num)
+        return None
+
+    @staticmethod
+    def _first_non_digit_index(value: str) -> int:
+        for index, char in enumerate(value):
+            if not char.isdigit():
+                return index
+        return -1
+
     def _parse_element(self, elem) -> Optional[Post]:
         """从单个帖子 DOM 元素中提取数据。"""
-        # 1) 帖子唯一标识（优先用 data-urn）
         urn = elem.get_attribute("data-urn") or elem.get_attribute("data-id") or ""
-
-        # 2) 正文内容
         content = self._find_text(elem, _CONTENT_SELECTORS)
+        timestamp = self._extract_timestamp_from_element(elem)
+        post_url = self._extract_post_url(elem, urn)
 
-        # 3) 时间戳 —— 取第一行非空文本，过滤含换行的作者名/关注按钮
-        timestamp = ""
-        for sel in _TIMESTAMP_SELECTORS:
-            try:
-                t = elem.find_element(By.CSS_SELECTOR, sel)
-                raw_ts = t.get_attribute("datetime") or ""
-                if not raw_ts:
-                    # 取文本中第一行有效内容，排除多行合并噪音
-                    for line in t.text.split("\n"):
-                        line = line.strip()
-                        if line and len(line) < 80:
-                            raw_ts = line
-                            break
-                if raw_ts:
-                    timestamp = raw_ts
-                    break
-            except NoSuchElementException:
-                continue
-
-        # 4) 帖子链接 —— 优先找直链，找不到则用 data-urn 构造
-        post_url = ""
-        for sel in _POST_LINK_SELECTORS:
-            try:
-                a = elem.find_element(By.CSS_SELECTOR, sel)
-                post_url = a.get_attribute("href") or ""
-                if post_url:
-                    break
-            except NoSuchElementException:
-                continue
-        # 从 data-urn (e.g. urn:li:activity:123) 构造 URL
-        if not post_url and urn:
-            import urllib.parse
-            post_url = f"https://www.linkedin.com/feed/update/{urllib.parse.quote(urn, safe=':')}/"
-
-        # 必须至少有 urn 或内容，才认为是有效帖子
         if not urn and not content:
             return None
 
-        # 生成稳定 ID
-        if urn:
-            post_id = hashlib.sha256(urn.encode()).hexdigest()[:20]
-        else:
-            post_id = hashlib.sha256(content.encode()).hexdigest()[:20]
+        post_id = self._build_post_id(urn, content)
 
         return Post(
             post_id=post_id,
@@ -468,6 +504,50 @@ class LinkedInScraper:
             url=post_url,
             raw_urn=urn,
         )
+
+    def _extract_timestamp_from_element(self, elem) -> str:
+        for sel in _TIMESTAMP_SELECTORS:
+            try:
+                timestamp = self._normalize_timestamp_text(
+                    elem.find_element(By.CSS_SELECTOR, sel)
+                )
+                if timestamp:
+                    return timestamp
+            except NoSuchElementException:
+                continue
+        return ""
+
+    @staticmethod
+    def _normalize_timestamp_text(element) -> str:
+        raw_ts = element.get_attribute("datetime") or ""
+        if raw_ts:
+            return raw_ts
+
+        for line in element.text.split("\n"):
+            line = line.strip()
+            if line and len(line) < 80:
+                return line
+        return ""
+
+    def _extract_post_url(self, elem, urn: str) -> str:
+        for sel in _POST_LINK_SELECTORS:
+            try:
+                href = elem.find_element(By.CSS_SELECTOR, sel).get_attribute("href") or ""
+                if href:
+                    return href
+            except NoSuchElementException:
+                continue
+
+        if not urn:
+            return ""
+
+        import urllib.parse
+        return f"https://www.linkedin.com/feed/update/{urllib.parse.quote(urn, safe=':')}/"
+
+    @staticmethod
+    def _build_post_id(urn: str, content: str) -> str:
+        base = urn if urn else content
+        return hashlib.sha256(base.encode()).hexdigest()[:20]
 
     @staticmethod
     def _find_text(parent, selectors: List[str]) -> str:

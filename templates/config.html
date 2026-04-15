@@ -168,6 +168,12 @@
                      value="{{ cfg.TWITTER_CHECK_INTERVAL_MINUTES }}" />
             </div>
             <div class="col-12 col-md-3">
+              <label for="TWITTER_LOOKBACK_DAYS" class="form-label">抓取时间范围（天）</label>
+              <input type="number" class="form-control" id="TWITTER_LOOKBACK_DAYS"
+                     name="TWITTER_LOOKBACK_DAYS" min="1" max="365"
+                     value="{{ cfg.TWITTER_LOOKBACK_DAYS }}" />
+            </div>
+            <div class="col-12 col-md-3">
               <label for="TWITTER_CHALLENGE_WAIT_MINUTES" class="form-label">验证等待（分钟）</label>
               <input type="number" class="form-control" id="TWITTER_CHALLENGE_WAIT_MINUTES"
                      name="TWITTER_CHALLENGE_WAIT_MINUTES" min="1" max="60"
@@ -202,6 +208,13 @@
                      name="CHECK_INTERVAL_MINUTES" min="1" max="1440"
                      value="{{ cfg.CHECK_INTERVAL_MINUTES }}" />
               <div class="form-text">建议 30–120 分钟，过频可能触发 LinkedIn 风控。</div>
+            </div>
+            <div class="col-12 col-md-4">
+              <label for="LINKEDIN_LOOKBACK_DAYS" class="form-label">抓取时间范围（天）</label>
+              <input type="number" class="form-control" id="LINKEDIN_LOOKBACK_DAYS"
+                     name="LINKEDIN_LOOKBACK_DAYS" min="1" max="365"
+                     value="{{ cfg.LINKEDIN_LOOKBACK_DAYS }}" />
+              <div class="form-text">按最近 N 天过滤帖子，而不是固定按条数截断。</div>
             </div>
             <div class="col-12 col-md-4">
               <label for="SECURITY_CHALLENGE_WAIT_MINUTES" class="form-label">验证码等待（分钟）</label>

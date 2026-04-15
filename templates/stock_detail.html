@@ -17,14 +17,17 @@
   <div class="card-header d-flex align-items-center justify-content-between py-2">
     <span class="fw-semibold"><i class="bi bi-graph-up me-2"></i>价格走势</span>
     <div class="btn-group btn-group-sm" id="period-group">
-      <button class="btn btn-outline-secondary active" data-period="1mo">1 月</button>
-      <button class="btn btn-outline-secondary" data-period="3mo">3 月</button>
+      <button class="btn btn-outline-secondary" data-period="1mo">1 月</button>
+      <button class="btn btn-outline-secondary active" data-period="3mo">3 月</button>
       <button class="btn btn-outline-secondary" data-period="6mo">6 月</button>
       <button class="btn btn-outline-secondary" data-period="1y">1 年</button>
     </div>
   </div>
   <div class="card-body">
     <canvas id="price-chart" height="260"></canvas>
+    <div id="news-hover-detail" class="alert alert-light border mt-3 mb-0 small text-muted">
+      将鼠标移到蓝色新闻事件点上，可查看对应简讯内容。
+    </div>
   </div>
 </div>
 
@@ -37,6 +40,12 @@
     <div id="news-insights" class="row g-2 mb-3"></div>
     <div id="news-timeline" class="list-group list-group-flush">
       <div class="text-muted small">加载简讯中…</div>
+    </div>
+    <div id="news-sentinel" class="py-1"></div>
+    <div class="mt-3 d-flex justify-content-center">
+      <button id="news-load-more" class="btn btn-sm btn-outline-primary d-none" type="button">
+        加载更多简讯
+      </button>
     </div>
   </div>
 </div>
@@ -187,9 +196,17 @@
   const TICKER = {{ ticker | tojson }};
   let mainChart = null;
   let latestNews = [];
+  let chartDates = [];
+  let newsOffset = 0;
+  const NEWS_PAGE_SIZE = 8;
+  let newsHasMore = false;
+  let newsLoading = false;
+  let newsObserver = null;
+  const NEWS_DATASET_INDEX = 1;
+  let chartHoverHandlersBound = false;
 
-  async function loadChart(period = "1mo") {
-    const r = await fetch(`/api/stock/${TICKER}/history?period=${period}`);
+  async function loadChart(period = "3mo") {
+    const r = await fetch(`/api/stock/${TICKER}/history?period=${period}&include_news=0`);
     const d = await r.json();
 
     document.getElementById("stock-name").textContent = d.error ? `⚠ ${d.error}` : (d.name || TICKER);
@@ -203,11 +220,22 @@
         `<span style="color:${color}">${d.current_price.toFixed(2)} ${d.currency}${changeStr}</span>`;
     }
 
-    if (d.error || !d.dates.length) return;
+    chartDates = Array.isArray(d.dates) ? d.dates : [];
+    latestNews = [];
+    newsOffset = 0;
+    renderNewsInsights(null);
+    renderNewsTimeline(latestNews, chartDates);
+    setLoadMoreVisible(false);
 
-    latestNews = Array.isArray(d.news) ? d.news : [];
-    renderNewsInsights(d.news_summary || null);
-    renderNewsTimeline(latestNews, d.dates);
+    await loadNewsBatch(true);
+
+    if (d.error || !d.dates.length) {
+      if (mainChart) {
+        mainChart.destroy();
+        mainChart = null;
+      }
+      return;
+    }
 
     const newsPoints = buildNewsPoints(d.dates, d.closes, latestNews);
 
@@ -231,8 +259,9 @@
             type: "scatter",
             label: "简讯",
             data: newsPoints,
-            pointRadius: 5,
-            pointHoverRadius: 7,
+            pointRadius: 7,
+            pointHoverRadius: 9,
+            pointHitRadius: 16,
             pointBackgroundColor: "#0d6efd",
             pointBorderColor: "#ffffff",
             pointBorderWidth: 1.5,
@@ -244,12 +273,22 @@
         plugins: {
           legend: { display: false },
           tooltip: {
+            filter: (ctx) => ctx.dataset?.type === "scatter",
             callbacks: {
+              title: (items) => {
+                const first = items?.[0];
+                if (first?.dataset?.type === "scatter") {
+                  const n = first.raw?.news;
+                  if (!n) return "新闻事件";
+                  return `${n.date} · ${n.source || "未知来源"}`;
+                }
+                return first?.label || "";
+              },
               label: (ctx) => {
                 if (ctx.dataset.type === "scatter") {
                   const n = ctx.raw?.news;
-                  if (!n) return "简讯";
-                  return `${n.date} | ${n.source}: ${n.title}`;
+                  if (!n) return ["简讯"];
+                  return wrapTooltipText(n.title || "(无标题简讯)", 24);
                 }
                 return `收盘价: ${ctx.raw}`;
               }
@@ -260,9 +299,140 @@
           x: { ticks: { maxTicksLimit: 8, font: { size: 11 } }, grid: { display: false } },
           y: { ticks: { font: { size: 11 } }, position: "right" },
         },
-        interaction: { intersect: false, mode: "index" },
+        interaction: { intersect: true, mode: "nearest" },
       },
     });
+
+    bindChartHoverHandlers();
+    renderHoveredNews(null);
+  }
+
+  function bindChartHoverHandlers() {
+    if (chartHoverHandlersBound || !mainChart?.canvas) return;
+    const canvas = mainChart.canvas;
+
+    canvas.addEventListener("mousemove", handleChartMouseMove);
+    canvas.addEventListener("mouseleave", handleChartMouseLeave);
+    chartHoverHandlersBound = true;
+  }
+
+  function handleChartMouseMove(event) {
+    if (!mainChart) return;
+
+    const hits = mainChart.getElementsAtEventForMode(event, "nearest", { intersect: true }, false);
+    const newsHit = hits.find((item) => item.datasetIndex === NEWS_DATASET_INDEX);
+
+    if (!newsHit) {
+      mainChart.canvas.style.cursor = "default";
+      renderHoveredNews(null);
+      return;
+    }
+
+    mainChart.canvas.style.cursor = "pointer";
+    const point = mainChart.data.datasets[newsHit.datasetIndex]?.data?.[newsHit.index];
+    renderHoveredNews(point?.news || null);
+  }
+
+  function handleChartMouseLeave() {
+    if (!mainChart?.canvas) return;
+    mainChart.canvas.style.cursor = "default";
+    renderHoveredNews(null);
+  }
+
+  function wrapTooltipText(text, maxLen = 24) {
+    const t = String(text || "");
+    if (!t) return [""];
+    const lines = [];
+    for (let i = 0; i < t.length; i += maxLen) {
+      lines.push(t.slice(i, i + maxLen));
+    }
+    return lines;
+  }
+
+  function renderHoveredNews(news) {
+    const box = document.getElementById("news-hover-detail");
+    if (!box) return;
+
+    if (!news) {
+      box.className = "alert alert-light border mt-3 mb-0 small text-muted";
+      box.innerHTML = "将鼠标移到蓝色新闻事件点上，可查看对应简讯内容。";
+      return;
+    }
+
+    const safeTitle = escapeHtml(news.title || "(无标题简讯)");
+    const safeSource = escapeHtml(news.source || "未知来源");
+    const safeDate = escapeHtml(news.published_at || news.date || "");
+    const safeType = escapeHtml(news.event_type || "其他");
+    const safeUrl = escapeHtml(news.url || "");
+
+    box.className = "alert alert-primary border mt-3 mb-0 small";
+    box.innerHTML = `
+      <div class="fw-semibold mb-1">${safeTitle}</div>
+      <div class="text-muted mb-2">${safeDate} · ${safeSource} · 事件: ${safeType}</div>
+      ${safeUrl ? `<a href="${safeUrl}" target="_blank" rel="noopener" class="btn btn-xs btn-outline-primary">查看原文</a>` : ""}
+    `;
+  }
+
+  async function loadNewsBatch(reset = false) {
+    if (newsLoading) return;
+
+    if (reset) {
+      latestNews = [];
+      newsOffset = 0;
+      newsHasMore = false;
+      renderNewsTimeline(latestNews, chartDates);
+      renderNewsInsights(null);
+      setLoadMoreVisible(false);
+    }
+
+    newsLoading = true;
+    setLoadMoreLoading(true);
+    const r = await fetch(`/api/stock/${TICKER}/news?offset=${newsOffset}&limit=${NEWS_PAGE_SIZE}`);
+    const d = await r.json();
+
+    const items = Array.isArray(d.items) ? d.items : [];
+    latestNews = latestNews.concat(items);
+    newsOffset += items.length;
+
+    newsHasMore = Boolean(d.has_more);
+    renderNewsTimeline(latestNews, chartDates);
+    renderNewsInsights(d.summary || null);
+    setLoadMoreVisible(newsHasMore);
+    setLoadMoreLoading(false);
+    newsLoading = false;
+  }
+
+  function setLoadMoreVisible(visible) {
+    const btn = document.getElementById("news-load-more");
+    if (!btn) return;
+    btn.classList.toggle("d-none", !visible);
+  }
+
+  function setLoadMoreLoading(loading) {
+    const btn = document.getElementById("news-load-more");
+    if (!btn) return;
+    btn.disabled = loading;
+    btn.textContent = loading ? "加载中…" : "加载更多简讯";
+  }
+
+  function setupNewsAutoLoad() {
+    if (newsObserver) {
+      newsObserver.disconnect();
+      newsObserver = null;
+    }
+
+    const sentinel = document.getElementById("news-sentinel");
+    if (!sentinel || !window.IntersectionObserver) return;
+
+    newsObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        if (!newsHasMore || newsLoading) continue;
+        loadNewsBatch(false);
+      }
+    }, { root: null, rootMargin: "200px 0px", threshold: 0.01 });
+
+    newsObserver.observe(sentinel);
   }
 
   function buildNewsPoints(dates, closes, newsItems) {
@@ -279,7 +449,9 @@
   function renderNewsTimeline(newsItems, datesInChart) {
     const holder = document.getElementById("news-timeline");
     const dateSet = new Set(datesInChart || []);
-    const visible = (newsItems || []).filter(n => dateSet.has(n.date));
+    const visible = dateSet.size
+      ? (newsItems || []).filter(n => dateSet.has(n.date))
+      : (newsItems || []);
 
     if (!visible.length) {
       holder.innerHTML = '<div class="text-muted small">当前周期没有可显示的简讯</div>';
@@ -369,7 +541,13 @@
     });
   });
 
-  loadChart("1mo");
+  document.getElementById("news-load-more")?.addEventListener("click", () => {
+    loadNewsBatch(false);
+  });
+
+  setupNewsAutoLoad();
+
+  loadChart("3mo");
 
   /* ===== 笔记 CRUD ===== */
   function showForm() { document.getElementById("new-form").classList.remove("d-none"); }

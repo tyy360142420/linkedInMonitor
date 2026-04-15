@@ -143,6 +143,9 @@ def config_page():
             "CHECK_INTERVAL_MINUTES": max(
                 1, int(request.form.get("CHECK_INTERVAL_MINUTES", 60) or 60)
             ),
+            "LINKEDIN_LOOKBACK_DAYS": max(
+                1, int(request.form.get("LINKEDIN_LOOKBACK_DAYS", 30) or 30)
+            ),
             "HEADLESS": headless_val,
             "SECURITY_CHALLENGE_WAIT_MINUTES": max(
                 1,
@@ -155,6 +158,9 @@ def config_page():
             "TWITTER_PASSWORD": request.form.get("TWITTER_PASSWORD", "").strip(),
             "TWITTER_CHECK_INTERVAL_MINUTES": max(
                 1, int(request.form.get("TWITTER_CHECK_INTERVAL_MINUTES", 60) or 60)
+            ),
+            "TWITTER_LOOKBACK_DAYS": max(
+                1, int(request.form.get("TWITTER_LOOKBACK_DAYS", 30) or 30)
             ),
             "TWITTER_CHALLENGE_WAIT_MINUTES": max(
                 1,
@@ -305,11 +311,12 @@ def twitter_page():
 @app.route("/api/twitter/start", methods=["POST"])
 def api_twitter_start():
     cfg = cfg_module.get_all()
-    if not (cfg.get("TWITTER_EMAIL") or cfg.get("TWITTER_USERNAME")) or not cfg.get("TWITTER_PASSWORD"):
-        return jsonify({"ok": False, "error": "请先在配置页填写 Twitter 登录账号和密码"}), 400
+    if not (cfg.get("TWITTER_EMAIL") or cfg.get("TWITTER_USERNAME")):
+        return jsonify({"ok": False, "error": "请先在配置页填写 Twitter 登录邮箱或用户名"}), 400
     if twitter_tracker.is_running():
         return jsonify({"ok": False, "error": "Twitter 追踪器已在运行中"}), 400
-    twitter_tracker.start()
+    if not twitter_tracker.start():
+        return jsonify({"ok": False, "error": twitter_tracker.last_error or "Twitter 追踪器启动失败"}), 400
     logger.info("Twitter 追踪器已通过 Web UI 启动")
     return jsonify({"ok": True, "message": "Twitter 追踪器已启动"})
 
@@ -430,10 +437,42 @@ def api_stock_history(ticker: str):
     if period not in ("1mo", "3mo", "6mo", "1y"):
         period = "3mo"
     data = sd.get_price_history(ticker.upper(), period)
-    news = sd.get_stock_news(ticker.upper(), limit=20)
-    data["news"] = news
-    data["news_summary"] = sd.summarize_news_impacts(news)
+    include_news = request.args.get("include_news", "1") != "0"
+    if include_news:
+        news = sd.get_stock_news(ticker.upper(), limit=20)
+        data["news"] = news
+        data["news_summary"] = sd.summarize_news_impacts(news)
+    else:
+        data["news"] = []
+        data["news_summary"] = None
     return jsonify(data)
+
+
+@app.route("/api/stock/<ticker>/news", methods=["GET"])
+def api_stock_news(ticker: str):
+    try:
+        limit = max(1, min(20, int(request.args.get("limit", 5))))
+    except ValueError:
+        limit = 5
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        offset = 0
+
+    # 按 offset + limit 拉取后再切片，前端可分批加载。
+    all_items = sd.get_stock_news(ticker.upper(), limit=offset + limit)
+    items = all_items[offset : offset + limit]
+    has_more = len(all_items) > offset + limit
+
+    return jsonify(
+        {
+            "items": items,
+            "offset": offset,
+            "limit": limit,
+            "has_more": has_more,
+            "summary": sd.summarize_news_impacts(all_items),
+        }
+    )
 
 
 # ================================================================== #
