@@ -221,6 +221,10 @@ class TrackerRunner:
         if self._publisher_id is None:
             return
 
+        tickers = stock_data.extract_tickers(post.content or "")
+        if not tickers:
+            return  # 不含股票提及，跳过入库
+
         db_post_id = db.insert_post(
             publisher_id=self._publisher_id,
             platform="linkedin",
@@ -232,7 +236,7 @@ class TrackerRunner:
         if not db_post_id:
             return
 
-        for ticker in stock_data.extract_tickers(post.content or ""):
+        for ticker in tickers:
             db.insert_stock_mention(db_post_id, self._publisher_id, ticker)
 
     def _cache_post(self, post, is_new: bool) -> None:

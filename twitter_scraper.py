@@ -1139,6 +1139,156 @@ class TwitterScraper:
         )
 
     # ------------------------------------------------------------------ #
+    # 账户统计 & 关注列表
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _parse_count_text(text: str) -> int:
+        """解析 Twitter 风格的数字，如 '1.2K'、'56.8M'。"""
+        text = (text or "").strip().replace(",", "").replace("\u00a0", "").replace(" ", "")
+        if not text:
+            return 0
+        multiplier = 1
+        upper = text.upper()
+        if upper.endswith("K"):
+            multiplier = 1_000
+            text = text[:-1]
+        elif upper.endswith("M"):
+            multiplier = 1_000_000
+            text = text[:-1]
+        elif upper.endswith("B"):
+            multiplier = 1_000_000_000
+            text = text[:-1]
+        try:
+            return int(float(text) * multiplier)
+        except (ValueError, TypeError):
+            return 0
+
+    def get_account_stats(self, handle: str) -> dict:
+        """获取账户的粉丝数（followers）和关注数（following）。"""
+        url = f"https://x.com/{handle}"
+        try:
+            self._navigate(url)
+            time.sleep(2)
+            stats = {"follower_count": 0, "following_count": 0}
+            try:
+                links = self._driver.find_elements(
+                    By.CSS_SELECTOR,
+                    'a[href$="/followers"], a[href$="/following"]',
+                )
+                for link in links:
+                    href = (link.get_attribute("href") or "").rstrip("/")
+                    spans = link.find_elements(By.TAG_NAME, "span")
+                    count_text = ""
+                    for span in spans:
+                        t = (span.text or "").strip()
+                        if t and any(c.isdigit() for c in t):
+                            count_text = t
+                            break
+                    count = self._parse_count_text(count_text)
+                    if href.endswith("/followers"):
+                        stats["follower_count"] = count
+                    elif href.endswith("/following"):
+                        stats["following_count"] = count
+            except Exception as exc:
+                logger.debug("解析账户统计信息失败: %s", exc)
+            logger.info(
+                "@%s 粉丝数: %s，关注数: %s",
+                handle,
+                stats["follower_count"],
+                stats["following_count"],
+            )
+            return stats
+        except Exception as exc:
+            logger.error("访问 @%s 主页失败: %s", handle, exc)
+            return {"follower_count": 0, "following_count": 0}
+
+    def get_following_list(
+        self,
+        handle: str,
+        max_users: int = 500,
+        batch_scrolls: int = 4,
+        batch_pause: float = 1.5,
+    ) -> List[dict]:
+        """
+        分批滚动抓取指定账号的关注列表（Following）。
+        返回 [{"handle": str, "name": str}, ...]
+        """
+        url = f"https://x.com/{handle}/following"
+        logger.info("开始分批抓取 @%s 的关注列表，上限 %d 人", handle, max_users)
+        try:
+            self._navigate(url)
+            time.sleep(3)
+
+            seen_handles: set = set()
+            result: List[dict] = []
+            no_new_streak = 0
+            MAX_NO_NEW = 4  # 连续 4 批无新增则停止
+
+            while len(result) < max_users and no_new_streak < MAX_NO_NEW:
+                cells = self._driver.find_elements(
+                    By.CSS_SELECTOR, '[data-testid="UserCell"]'
+                )
+                new_found = 0
+
+                for cell in cells:
+                    if len(result) >= max_users:
+                        break
+                    try:
+                        user_handle, user_name = self._extract_user_from_cell(cell)
+                        if not user_handle:
+                            continue
+                        key = user_handle.lower()
+                        if key in seen_handles:
+                            continue
+                        seen_handles.add(key)
+                        result.append({"handle": user_handle, "name": user_name})
+                        new_found += 1
+                    except Exception as exc:
+                        logger.debug("解析用户单元格失败: %s", exc)
+
+                no_new_streak = 0 if new_found > 0 else no_new_streak + 1
+                if len(result) >= max_users:
+                    break
+
+                # 分批滚动加载更多
+                for _ in range(batch_scrolls):
+                    self._driver.execute_script("window.scrollBy(0, 800)")
+                    time.sleep(0.4)
+                time.sleep(batch_pause)
+                logger.debug("已抓取 %d/%d，本批新增 %d", len(result), max_users, new_found)
+
+            logger.info("@%s 关注列表抓取完毕，共 %d 人", handle, len(result))
+            return result
+        except WebDriverException as exc:
+            logger.error("抓取 @%s 关注列表失败: %s", handle, exc)
+            return []
+
+    def _extract_user_from_cell(self, cell) -> tuple:
+        """从 UserCell DOM 中提取 (handle, display_name)，失败返回 ('', '')。"""
+        links = cell.find_elements(By.CSS_SELECTOR, 'a[role="link"]')
+        for link in links:
+            href = (link.get_attribute("href") or "").strip()
+            for domain in ("https://x.com", "https://twitter.com", "http://x.com"):
+                href = href.replace(domain, "")
+            path = href.strip("/")
+            # 排除非用户路径（含 / 或特殊前缀）
+            if not path or "/" in path or path.lower().startswith("i/"):
+                continue
+            user_handle = path
+            user_name = user_handle
+            try:
+                name_spans = cell.find_elements(
+                    By.CSS_SELECTOR, 'div[dir="ltr"] > span'
+                )
+                if name_spans:
+                    user_name = name_spans[0].text or user_handle
+            except Exception:
+                pass
+            return user_handle, user_name
+        return "", ""
+
+    # ------------------------------------------------------------------ #
     # 生命周期
     # ------------------------------------------------------------------ #
 

@@ -1,0 +1,465 @@
+{% extends "base.html" %}
+{% block title %}Twitter 账户比较 — LinkedIn 追踪器{% endblock %}
+
+{% block content %}
+
+<style>
+  .account-checkbox-item {
+    padding: 0.5rem;
+  }
+  
+  .account-checkbox-item label {
+    margin-bottom: 0;
+    cursor: pointer;
+    user-select: none;
+  }
+  
+  .account-checkbox-item input[type="checkbox"] {
+    margin-right: 0.5rem;
+  }
+  
+  .comparison-result {
+    display: none;
+  }
+  
+  .comparison-result.show {
+    display: block;
+  }
+  
+  .stock-row-common {
+    background-color: #f8f9fa;
+    font-weight: 500;
+  }
+  
+  .badge-common {
+    background-color: #198754;
+  }
+  
+  .account-mention-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.85rem;
+    margin: 0.1rem;
+    background-color: #e9ecef;
+    border: 1px solid #dee2e6;
+  }
+  
+  .stock-table {
+    font-size: 0.9rem;
+  }
+  
+  .stock-table th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+  }
+  
+  .change-positive {
+    color: #198754;
+    font-weight: 600;
+  }
+  
+  .change-negative {
+    color: #dc3545;
+    font-weight: 600;
+  }
+  
+  .selection-summary {
+    padding: 1rem;
+    background-color: #e7f3ff;
+    border-left: 4px solid #0066cc;
+    margin-bottom: 1rem;
+    border-radius: 0.25rem;
+  }
+  
+  .loading-spinner {
+    display: none;
+    text-align: center;
+    padding: 2rem;
+  }
+  
+  .loading-spinner.show {
+    display: block;
+  }
+</style>
+
+<!-- 页面标题 -->
+<div class="mb-4">
+  <h2 class="mb-2"><i class="bi bi-twitter-x me-2 text-twitter"></i>Twitter 账户比较</h2>
+  <p class="text-muted mb-0">选择多个账户，查看它们共同关注的人 和 共同 call 的股票代码</p>
+</div>
+
+<div class="row g-4">
+  <!-- 左侧：账户选择 -->
+  <div class="col-lg-3">
+    <div class="card shadow-sm">
+      <div class="card-header fw-semibold">
+        <i class="bi bi-people me-2"></i>选择账户
+      </div>
+      <div class="card-body p-0">
+        {% if accounts %}
+        <div id="accounts-list" class="list-group list-group-flush">
+          {% for acc in accounts %}
+          <div class="account-checkbox-item list-group-item">
+            <div class="d-flex align-items-center mb-1">
+              <input type="checkbox" class="account-checkbox" value="{{ acc.id }}" />
+              <div class="flex-grow-1 ms-2">
+                <div class="fw-semibold text-twitter">@{{ acc.handle }}</div>
+                <div class="text-muted small" id="sync-status-{{ acc.id }}">—</div>
+              </div>
+              <button class="btn btn-xs btn-outline-secondary ms-1"
+                      title="同步关注列表（粉丝数 ≥ 20,000 才会抓取）"
+                      onclick="syncFollowing({{ acc.id }}, '{{ acc.handle }}')">
+                <i class="bi bi-arrow-repeat"></i>
+              </button>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+          <p>暂无 Twitter 账户</p>
+          <a href="{{ url_for('twitter_page') }}" class="btn btn-sm btn-twitter">
+            <i class="bi bi-plus-lg me-1"></i>添加账户
+          </a>
+        </div>
+        {% endif %}
+      </div>
+      <div class="card-footer">
+        <button id="btn-clear-selection" class="btn btn-sm btn-outline-secondary w-100" disabled>
+          <i class="bi bi-x-circle me-1"></i>清除选择
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧：比较结果 -->
+  <div class="col-lg-9">
+    <!-- 加载中提示 -->
+    <div id="loading-spinner" class="loading-spinner">
+      <div class="spinner-border text-twitter me-2" role="status">
+        <span class="visually-hidden">加载中...</span>
+      </div>
+      <span class="text-muted">正在分析数据...</span>
+    </div>
+
+    <!-- 选择摘要 -->
+    <div id="selection-summary" class="selection-summary" style="display: none;">
+      <strong>已选择：</strong><span id="selected-accounts-text"></span>
+      <div id="selected-handles" style="margin-top: 0.5rem;"></div>
+    </div>
+
+    <!-- 比较结果 -->
+    <div id="comparison-result" class="comparison-result">
+      <!-- 共同关注人卡片 -->
+      <div class="card shadow-sm mb-4" id="common-followings-card" style="display: none;">
+        <div class="card-header fw-semibold" style="background:#1da1f2;color:#fff;">
+          <i class="bi bi-people-fill me-2"></i>
+          共同关注的人：<span id="common-following-count">0</span> 人
+        </div>
+        <div class="card-body p-0">
+          <div id="common-followings-list" style="max-height:300px;overflow-y:auto;">
+            <div id="common-followings-body" class="d-flex flex-wrap gap-2 p-3"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 共同关注人为空提示 -->
+      <div class="card shadow-sm mb-4" id="no-following-data-card" style="display: none;">
+        <div class="card-body text-muted small">
+          <i class="bi bi-info-circle me-2"></i>
+          尚未同步关注列表数据，点击账户旁边的 <i class="bi bi-arrow-repeat"></i> 按钮触发同步（粉丝数 ≥ 20,000 才会抓取）。
+        </div>
+      </div>
+
+      <!-- 共同股票卡片 -->
+      <div class="card shadow-sm mb-4" id="common-stocks-card" style="display: none;">
+        <div class="card-header fw-semibold bg-success text-white">
+          <i class="bi bi-star-fill me-2"></i>
+          <span id="common-count"></span> 只共同 call 的股票
+        </div>
+        <div class="card-body p-0">
+          <div id="common-stocks-list" class="table-responsive">
+            <table class="table table-hover mb-0 stock-table">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 80px">代码</th>
+                  <th>提及账户</th>
+                  <th style="width: 100px">总提及数</th>
+                  <th style="width: 120px">性能</th>
+                  <th style="width: 100px">操作</th>
+                </tr>
+              </thead>
+              <tbody id="common-stocks-body">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 所有股票表 -->
+      <div class="card shadow-sm" id="all-stocks-card" style="display: none;">
+        <div class="card-header fw-semibold">
+          <i class="bi bi-graph-up me-2"></i>所有提及的股票
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0 stock-table">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 80px">代码</th>
+                  <th>提及详情</th>
+                  <th style="width: 100px">总提及数</th>
+                  <th style="width: 120px">性能</th>
+                  <th style="width: 100px">操作</th>
+                </tr>
+              </thead>
+              <tbody id="all-stocks-body">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 空状态 -->
+      <div id="no-results" class="text-center text-muted py-5" style="display: none;">
+        <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+        <p>暂无数据，请选择账户并确保有股票提及记录</p>
+      </div>
+    </div>
+
+    <!-- 初始提示 -->
+    <div id="initial-message" class="alert alert-info">
+      <i class="bi bi-info-circle me-2"></i>
+      <strong>使用说明：</strong>左侧选择要比较的 Twitter 账户，系统将自动分析这些账户的共同关注股票。
+    </div>
+  </div>
+</div>
+
+<script>
+  const accountCheckboxes = document.querySelectorAll('.account-checkbox');
+  const btnClearSelection = document.getElementById('btn-clear-selection');
+  const loadingSpinner = document.getElementById('loading-spinner');
+  const comparisonResult = document.getElementById('comparison-result');
+  const initialMessage = document.getElementById('initial-message');
+  const selectionSummary = document.getElementById('selection-summary');
+  const commonStocksCard = document.getElementById('common-stocks-card');
+  const allStocksCard = document.getElementById('all-stocks-card');
+  const noResults = document.getElementById('no-results');
+
+  // 监听复选框变化
+  accountCheckboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', onSelectionChanged);
+  });
+
+  btnClearSelection.addEventListener('click', clearSelection);
+
+  function onSelectionChanged() {
+    const selected = Array.from(accountCheckboxes)
+      .filter(cb => cb.checked)
+      .map(cb => cb.value);
+
+    if (selected.length === 0) {
+      btnClearSelection.disabled = true;
+      comparisonResult.classList.remove('show');
+      initialMessage.style.display = 'block';
+      selectionSummary.style.display = 'none';
+      return;
+    }
+
+    btnClearSelection.disabled = false;
+    selectionSummary.style.display = 'block';
+    initialMessage.style.display = 'none';
+    fetchComparisonData(selected);
+  }
+
+  function clearSelection() {
+    accountCheckboxes.forEach(cb => cb.checked = false);
+    onSelectionChanged();
+  }
+
+  function fetchComparisonData(accountIds) {
+    loadingSpinner.classList.add('show');
+    comparisonResult.classList.remove('show');
+
+    fetch('/api/twitter/comparison', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        account_ids: accountIds
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      loadingSpinner.classList.remove('show');
+      
+      if (!data.ok) {
+        alert('错误: ' + (data.error || '未知错误'));
+        return;
+      }
+
+      displayComparisonResults(data);
+    })
+    .catch(err => {
+      loadingSpinner.classList.remove('show');
+      alert('获取数据失败: ' + err.message);
+    });
+  }
+
+  // Following 同步轮询
+  const _syncPollers = {};
+
+  function syncFollowing(pubId, handle) {
+    const el = document.getElementById('sync-status-' + pubId);
+    if (el) el.innerHTML = '<span class="text-info">同步中…</span>';
+    fetch('/api/twitter/sync-following/' + pubId, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) { if (el) el.innerHTML = '<span class="text-danger">' + d.error + '</span>'; return; }
+        if (_syncPollers[pubId]) clearInterval(_syncPollers[pubId]);
+        _syncPollers[pubId] = setInterval(() => pollSyncStatus(pubId), 3000);
+      })
+      .catch(() => { if (el) el.innerHTML = '<span class="text-danger">请求失败</span>'; });
+  }
+
+  function pollSyncStatus(pubId) {
+    fetch('/api/twitter/sync-following/' + pubId + '/status')
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) return;
+        const s = d.status;
+        const el = document.getElementById('sync-status-' + pubId);
+        if (s.state === 'running') {
+          if (el) el.innerHTML = '<span class="text-info">' + (s.message || '同步中…') + '</span>';
+        } else {
+          clearInterval(_syncPollers[pubId]);
+          delete _syncPollers[pubId];
+          if (s.state === 'done') {
+            if (el) {
+              if (s.skipped) {
+                el.innerHTML = '<span class="text-muted">' + s.message + '</span>';
+              } else {
+                el.innerHTML = '<span class="text-success">已同步 ' + s.synced_count + ' 人</span>';
+              }
+            }
+            const sel = Array.from(document.querySelectorAll('.account-checkbox')).filter(cb => cb.checked).map(cb => cb.value);
+            if (sel.length > 0) fetchComparisonData(sel);
+          } else if (s.state === 'error') {
+            if (el) el.innerHTML = '<span class="text-danger">' + s.message + '</span>';
+          }
+        }
+      });
+  }
+
+  function displayComparisonResults(data) {
+    const { selected_accounts, common_stocks, all_stocks_by_ticker, common_count,
+            common_followings, common_following_count, sync_status } = data;
+
+    document.getElementById('selected-accounts-text').textContent = selected_accounts.length + ' 个账户';
+    document.getElementById('selected-handles').innerHTML =
+      selected_accounts.map(a => '<span class="badge bg-secondary me-1">@' + a.handle + '</span>').join('');
+
+    // ── 共同关注人 ──────────────────────────────
+    const hasAnySync = sync_status && sync_status.some(s => s.synced_following_count > 0);
+    const cfCard = document.getElementById('common-followings-card');
+    const nfCard = document.getElementById('no-following-data-card');
+    if (hasAnySync) {
+      nfCard.style.display = 'none';
+      if (common_following_count > 0) {
+        cfCard.style.display = 'block';
+        document.getElementById('common-following-count').textContent = common_following_count;
+        document.getElementById('common-followings-body').innerHTML =
+          common_followings.map(f => {
+            const label = (f.following_name && f.following_name !== f.following_handle)
+              ? f.following_name + ' (@' + f.following_handle + ')'
+              : '@' + f.following_handle;
+            return '<a href="https://x.com/' + f.following_handle + '" target="_blank" rel="noopener" ' +
+                   'class="badge text-decoration-none" ' +
+                   'style="background:#1da1f2;color:#fff;font-size:.85rem;padding:.4em .7em;">' +
+                   label + '</a>';
+          }).join('');
+      } else {
+        cfCard.style.display = 'none';
+        nfCard.style.display = 'block';
+        nfCard.querySelector('div').innerHTML =
+          '<i class="bi bi-check-circle me-2 text-success"></i>关注列表已同步，但选中账户没有共同关注的人。';
+      }
+    } else {
+      cfCard.style.display = 'none';
+      nfCard.style.display = 'block';
+    }
+
+    // 更新左侧同步状态标签
+    if (sync_status) {
+      sync_status.forEach(function(s) {
+        const el = document.getElementById('sync-status-' + s.publisher_id);
+        if (!el) return;
+        if (s.synced_following_count > 0) {
+          el.innerHTML = '<span class="text-success">已同步 ' + s.synced_following_count + ' 人</span>';
+        } else if (s.follower_count !== null && s.follower_count !== undefined) {
+          const fc = s.follower_count || 0;
+          el.innerHTML = fc < 20000
+            ? '<span class="text-muted">粉丝 ' + fc.toLocaleString() + '（不满 2 万）</span>'
+            : '<span class="text-warning">粉丝 ' + fc.toLocaleString() + '，未同步</span>';
+        } else {
+          el.textContent = '未同步';
+        }
+      });
+    }
+
+    // ── 共同 call 的股票 ─────────────────────────
+    const csCard = document.getElementById('common-stocks-card');
+    if (common_count > 0) {
+      csCard.style.display = 'block';
+      document.getElementById('common-count').textContent = common_count;
+      document.getElementById('common-stocks-body').innerHTML = common_stocks.map(stock => {
+        const perf = (stock.change_pct != null)
+          ? '<span class="' + (stock.is_up ? 'change-positive' : 'change-negative') + '">' +
+            (stock.is_up ? '↑' : '↓') + ' ' + Math.abs(stock.change_pct).toFixed(2) + '%</span>'
+          : '<span class="text-muted">—</span>';
+        return '<tr class="stock-row-common"><td><strong>' + stock.ticker + '</strong></td><td>' +
+          stock.mentioned_by.split(',').map(h => '<span class="account-mention-badge">@' + h + '</span>').join('') +
+          '</td><td>' + stock.total_mentions + '</td><td>' + perf +
+          '</td><td><a href="/stock/' + stock.ticker + '" class="btn btn-sm btn-outline-primary">' +
+          '<i class="bi bi-arrow-right"></i></a></td></tr>';
+      }).join('');
+    } else {
+      csCard.style.display = 'none';
+    }
+
+    // ── 所有股票 ────────────────────────────────
+    if (Object.keys(all_stocks_by_ticker).length > 0) {
+      allStocksCard.style.display = 'block';
+      noResults.style.display = 'none';
+      const tickers = Object.keys(all_stocks_by_ticker).sort(
+        (a, b) => all_stocks_by_ticker[b].total_mentions - all_stocks_by_ticker[a].total_mentions
+      );
+      document.getElementById('all-stocks-body').innerHTML = tickers.map(ticker => {
+        const stock = all_stocks_by_ticker[ticker];
+        const isCommon = common_count > 0 && Object.keys(stock.mentions_by_account).length === selected_accounts.length;
+        const mentions = Object.values(stock.mentions_by_account).map(m =>
+          '<div class="small"><span class="badge bg-info">@' + m.handle + '</span> <span class="text-muted">' + m.mention_count + '×</span></div>'
+        ).join('');
+        const perf = (stock.change_pct != null)
+          ? '<span class="' + (stock.is_up ? 'change-positive' : 'change-negative') + '">' +
+            (stock.is_up ? '↑' : '↓') + ' ' + Math.abs(stock.change_pct).toFixed(2) + '%</span>'
+          : '<span class="text-muted">—</span>';
+        return '<tr' + (isCommon ? ' class="table-success"' : '') + '><td><strong>' + ticker + '</strong> ' +
+          (isCommon ? '<span class="badge" style="background:#198754">共</span>' : '') +
+          '</td><td>' + mentions + '</td><td>' + stock.total_mentions + '</td><td>' + perf +
+          '</td><td><a href="/stock/' + ticker + '" class="btn btn-sm btn-outline-primary">' +
+          '<i class="bi bi-arrow-right"></i></a></td></tr>';
+      }).join('');
+    } else {
+      allStocksCard.style.display = 'none';
+      noResults.style.display = 'block';
+    }
+
+    comparisonResult.classList.add('show');
+  }
+</script>
+
+{% endblock %}

@@ -37,6 +37,10 @@ class TwitterRunner:
         self.last_error: str = ""
         self.cooldown_until: Optional[datetime] = None
 
+        # Following 同步状态
+        self._sync_lock = threading.Lock()
+        self._sync_status: Dict[int, Dict] = {}  # publisher_id -> status dict
+
     # ------------------------------------------------------------------ #
     # 公开控制接口
     # ------------------------------------------------------------------ #
@@ -139,9 +143,15 @@ class TwitterRunner:
 
             n = len(accounts)
             self.status_message = f"已登录，正在监控 {n} 个账号"
-            for account in accounts:
+            for idx, account in enumerate(accounts):
                 if self._stop_event.is_set():
                     break
+                if idx > 0:
+                    # 账号之间等待，避免 X.com 连续请求风控
+                    for _ in range(6):
+                        if self._stop_event.is_set():
+                            break
+                        time.sleep(5)
                 self._do_check(account)
 
             if self._stop_event.is_set():
@@ -218,10 +228,12 @@ class TwitterRunner:
         self.last_check_at = datetime.now()
         logger.info("▶ 开始抓取 @%s", handle)
 
+        lookback_days = int(cfg_module.get_all().get("TWITTER_LOOKBACK_DAYS", 30))
+        logger.info("抓取 @%s，时间窗口：最近 %d 天", handle, lookback_days)
         try:
             tweets = self._scraper.get_recent_tweets(
                 handle,
-                lookback_days=int(cfg_module.get_all().get("TWITTER_LOOKBACK_DAYS", 30)),
+                lookback_days=lookback_days,
             )
         except Exception as exc:
             logger.error("抓取 @%s 失败: %s", handle, exc)
@@ -230,6 +242,10 @@ class TwitterRunner:
 
         new_count = 0
         for tweet in tweets:
+            tickers = stock_data.extract_tickers(tweet.content)
+            if not tickers:
+                continue  # 不含股票提及，跳过入库
+
             db_post_id = db.insert_post(
                 publisher_id=publisher_id,
                 platform="twitter",
@@ -240,7 +256,6 @@ class TwitterRunner:
             )
             if db_post_id:  # 新推文
                 new_count += 1
-                tickers = stock_data.extract_tickers(tweet.content)
                 for ticker in tickers:
                     db.insert_stock_mention(db_post_id, publisher_id, ticker)
 
@@ -276,3 +291,114 @@ class TwitterRunner:
         self.last_error = msg
         self.status_message = msg
         logger.error(msg)
+
+    # ------------------------------------------------------------------ #
+    # Following 同步
+    # ------------------------------------------------------------------ #
+
+    def get_sync_status(self, publisher_id: int) -> Dict:
+        with self._sync_lock:
+            return dict(self._sync_status.get(publisher_id, {"state": "idle"}))
+
+    def start_following_sync(self, publisher_id: int, handle: str, min_followers: int = 20000) -> bool:
+        """在后台线程中启动关注列表同步，返回是否成功启动（已在同步中返回 False）。"""
+        with self._sync_lock:
+            existing = self._sync_status.get(publisher_id, {})
+            if existing.get("state") == "running":
+                return False
+            self._sync_status[publisher_id] = {
+                "state": "running",
+                "handle": handle,
+                "message": "正在同步…",
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "follower_count": None,
+                "synced_count": 0,
+                "skipped": False,
+            }
+
+        thread = threading.Thread(
+            target=self._do_following_sync,
+            args=(publisher_id, handle, min_followers),
+            daemon=True,
+            name=f"tw-following-{handle}",
+        )
+        thread.start()
+        return True
+
+    def _do_following_sync(self, publisher_id: int, handle: str, min_followers: int) -> None:
+        """后台线程执行体：抓取 following 列表并存库。"""
+        scraper = None
+        own_scraper = False
+
+        def _update(state: str, **kwargs):
+            with self._sync_lock:
+                self._sync_status[publisher_id].update({"state": state, **kwargs})
+
+        try:
+            # 优先复用正在运行的 scraper
+            with self._lock:
+                scraper = self._scraper
+
+            if scraper is None:
+                cfg = cfg_module.get_all()
+                scraper = TwitterScraper(
+                    email=str(cfg.get("TWITTER_EMAIL", "")),
+                    username=str(cfg.get("TWITTER_USERNAME", "")),
+                    password=str(cfg.get("TWITTER_PASSWORD", "")),
+                    headless=bool(cfg.get("TWITTER_HEADLESS", False)),
+                    challenge_wait_minutes=int(cfg.get("TWITTER_CHALLENGE_WAIT_MINUTES", 5)),
+                    session_profile_dir=str(
+                        cfg.get("TWITTER_SESSION_PROFILE_DIR",
+                                os.path.join(APP_DIR, ".edge_profile_twitter"))
+                    ),
+                )
+                scraper._init_driver()
+                if not scraper.login():
+                    _update("error", message="Twitter 登录失败，无法同步")
+                    scraper.close()
+                    return
+                own_scraper = True
+
+            # 1. 获取账户统计（粉丝数）
+            _update("running", message=f"正在获取 @{handle} 的粉丝数…")
+            stats = scraper.get_account_stats(handle)
+            follower_count = stats.get("follower_count", 0)
+            following_count = stats.get("following_count", 0)
+            db.upsert_twitter_account_stats(publisher_id, follower_count, following_count)
+
+            if follower_count < min_followers:
+                _update(
+                    "done",
+                    message=f"@{handle} 粉丝数 {follower_count:,} < {min_followers:,}，已跳过",
+                    follower_count=follower_count,
+                    skipped=True,
+                    synced_count=0,
+                )
+                logger.info("@%s 粉丝数 %d < %d，跳过 following 抓取", handle, follower_count, min_followers)
+                return
+
+            # 2. 抓取 following 列表
+            _update("running", message=f"@{handle} 粉丝数 {follower_count:,}，开始抓取关注列表…",
+                    follower_count=follower_count)
+            followings = scraper.get_following_list(handle, max_users=500)
+
+            # 3. 存库
+            db.replace_twitter_followings(publisher_id, followings)
+            _update(
+                "done",
+                message=f"同步完成，共 {len(followings)} 人",
+                follower_count=follower_count,
+                synced_count=len(followings),
+                skipped=False,
+            )
+            logger.info("@%s following 同步完成，共 %d 人", handle, len(followings))
+
+        except Exception as exc:
+            logger.error("@%s following 同步异常: %s", handle, exc)
+            _update("error", message=f"同步失败: {exc}")
+        finally:
+            if own_scraper and scraper:
+                try:
+                    scraper.close()
+                except Exception:
+                    pass

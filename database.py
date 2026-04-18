@@ -83,6 +83,27 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_sm_publisher  ON stock_mentions(publisher_id);
         CREATE INDEX IF NOT EXISTS idx_posts_pub     ON posts(publisher_id);
         CREATE INDEX IF NOT EXISTS idx_notes_ticker  ON notes(ticker);
+
+        CREATE TABLE IF NOT EXISTS twitter_account_stats (
+            publisher_id    INTEGER PRIMARY KEY,
+            follower_count  INTEGER DEFAULT 0,
+            following_count INTEGER DEFAULT 0,
+            updated_at      TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (publisher_id) REFERENCES publishers(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS twitter_followings (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            publisher_id     INTEGER NOT NULL,
+            following_handle TEXT NOT NULL,
+            following_name   TEXT DEFAULT '',
+            synced_at        TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(publisher_id, following_handle),
+            FOREIGN KEY (publisher_id) REFERENCES publishers(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tf_publisher ON twitter_followings(publisher_id);
+        CREATE INDEX IF NOT EXISTS idx_tf_handle    ON twitter_followings(following_handle);
         """)
 
 
@@ -268,6 +289,20 @@ def get_posts_for_ticker(ticker: str, limit: int = 30) -> List[Dict]:
         return [dict(r) for r in rows]
 
 
+def get_first_mentioned_for_ticker(ticker: str) -> Optional[str]:
+    """返回某股票在系统内的首次提及时间（本地时区字符串），不存在则返回 None。"""
+    with _db() as conn:
+        row = conn.execute(
+            """SELECT MIN(mentioned_at) AS first_mentioned
+               FROM stock_mentions
+               WHERE ticker = ?""",
+            (ticker.upper(),),
+        ).fetchone()
+        if not row:
+            return None
+        return row["first_mentioned"]
+
+
 # ------------------------------------------------------------------ #
 # Notes
 # ------------------------------------------------------------------ #
@@ -308,3 +343,179 @@ def update_note(note_id: int, title: str, content: str) -> None:
 def delete_note(note_id: int) -> None:
     with _db() as conn:
         conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
+
+
+# ================================================================== #
+# Twitter Following 同步
+# ================================================================== #
+
+def upsert_twitter_account_stats(
+    publisher_id: int, follower_count: int, following_count: int
+) -> None:
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO twitter_account_stats
+               (publisher_id, follower_count, following_count, updated_at)
+               VALUES (?, ?, ?, datetime('now','localtime'))
+               ON CONFLICT(publisher_id) DO UPDATE SET
+                 follower_count  = excluded.follower_count,
+                 following_count = excluded.following_count,
+                 updated_at      = excluded.updated_at""",
+            (publisher_id, follower_count, following_count),
+        )
+
+
+def get_twitter_account_stats(publisher_id: int) -> Optional[Dict]:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM twitter_account_stats WHERE publisher_id=?",
+            (publisher_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def replace_twitter_followings(publisher_id: int, followings: List[dict]) -> None:
+    """整体替换某发布人的关注列表。"""
+    with _db() as conn:
+        conn.execute(
+            "DELETE FROM twitter_followings WHERE publisher_id=?", (publisher_id,)
+        )
+        conn.executemany(
+            """INSERT OR IGNORE INTO twitter_followings
+               (publisher_id, following_handle, following_name)
+               VALUES (?, ?, ?)""",
+            [(publisher_id, f["handle"], f.get("name", "")) for f in followings],
+        )
+
+
+def get_common_followings_for_publishers(publisher_ids: List[int]) -> List[Dict]:
+    """获取多个发布人共同关注的账户。"""
+    if not publisher_ids:
+        return []
+    placeholders = ",".join("?" * len(publisher_ids))
+    with _db() as conn:
+        rows = conn.execute(
+            f"""SELECT
+                    tf.following_handle,
+                    MAX(tf.following_name) AS following_name,
+                    COUNT(DISTINCT tf.publisher_id) AS followed_by_count,
+                    GROUP_CONCAT(DISTINCT p.handle) AS followed_by_handles
+                FROM twitter_followings tf
+                JOIN publishers p ON p.id = tf.publisher_id
+                WHERE tf.publisher_id IN ({placeholders})
+                GROUP BY tf.following_handle
+                HAVING COUNT(DISTINCT tf.publisher_id) = ?
+                ORDER BY tf.following_handle""",
+            publisher_ids + [len(publisher_ids)],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_following_sync_status(publisher_ids: List[int]) -> List[Dict]:
+    """获取各账户关注列表的同步状态。"""
+    if not publisher_ids:
+        return []
+    placeholders = ",".join("?" * len(publisher_ids))
+    with _db() as conn:
+        rows = conn.execute(
+            f"""SELECT
+                    p.id AS publisher_id,
+                    p.handle,
+                    tas.follower_count,
+                    tas.following_count,
+                    tas.updated_at AS stats_updated_at,
+                    COUNT(tf.id) AS synced_following_count,
+                    MAX(tf.synced_at) AS last_synced_at
+                FROM publishers p
+                LEFT JOIN twitter_account_stats tas ON tas.publisher_id = p.id
+                LEFT JOIN twitter_followings tf ON tf.publisher_id = p.id
+                WHERE p.id IN ({placeholders})
+                GROUP BY p.id""",
+            publisher_ids,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ================================================================== #
+# Twitter 账户比较
+# ================================================================== #
+
+def get_common_stocks_for_publishers(publisher_ids: List[int]) -> List[Dict]:
+    """
+    获取多个发布人共同提及的股票。
+    返回这些发布人都提及过的股票，按提及次数排序。
+    """
+    if not publisher_ids:
+        return []
+    
+    placeholders = ','.join('?' * len(publisher_ids))
+    with _db() as conn:
+        rows = conn.execute(f"""
+            SELECT 
+                sm.ticker,
+                COUNT(DISTINCT sm.publisher_id) AS publisher_count,
+                COUNT(sm.id) AS total_mentions,
+                MIN(sm.mentioned_at) AS first_mentioned,
+                MAX(sm.mentioned_at) AS last_mentioned,
+                GROUP_CONCAT(DISTINCT p.handle) AS mentioned_by
+            FROM stock_mentions sm
+            JOIN publishers p ON p.id = sm.publisher_id
+            WHERE sm.publisher_id IN ({placeholders})
+            GROUP BY sm.ticker
+            HAVING COUNT(DISTINCT sm.publisher_id) = ?
+            ORDER BY total_mentions DESC
+        """, publisher_ids + [len(publisher_ids)]).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_stocks_for_publishers(publisher_ids: List[int]) -> List[Dict]:
+    """
+    获取多个发布人提及的所有股票及其在各账户中的提及情况。
+    """
+    if not publisher_ids:
+        return []
+    
+    placeholders = ','.join('?' * len(publisher_ids))
+    with _db() as conn:
+        rows = conn.execute(f"""
+            SELECT 
+                sm.ticker,
+                p.id AS publisher_id,
+                p.handle,
+                p.name,
+                COUNT(sm.id) AS mention_count,
+                MIN(sm.mentioned_at) AS first_mentioned,
+                MAX(sm.mentioned_at) AS last_mentioned
+            FROM stock_mentions sm
+            JOIN publishers p ON p.id = sm.publisher_id
+            WHERE sm.publisher_id IN ({placeholders})
+            ORDER BY sm.ticker, p.handle
+        """, publisher_ids).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_common_mentioned_publishers_for_publishers(publisher_ids: List[int]) -> List[Dict]:
+    """
+    获取在这些发布人的推文内容中被提及/标记的其他发布人。
+    通过在推文内容中查找 @handle 来识别。
+    """
+    if not publisher_ids:
+        return []
+    
+    placeholders = ','.join('?' * len(publisher_ids))
+    with _db() as conn:
+        # 首先获取这些发布人的所有推文内容
+        rows = conn.execute(f"""
+            SELECT 
+                p.id,
+                p.handle,
+                p.name,
+                p.platform,
+                COUNT(DISTINCT po.id) AS mention_count_in_posts
+            FROM posts po
+            JOIN publishers p ON p.id = po.publisher_id
+            WHERE po.publisher_id IN ({placeholders})
+            GROUP BY p.id
+            ORDER BY p.handle
+        """, publisher_ids).fetchall()
+        return [dict(r) for r in rows]

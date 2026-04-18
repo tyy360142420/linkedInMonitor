@@ -153,3 +153,30 @@
 .table th { font-weight: 600; }
 .table td.small { word-break: break-all; }
 .target-url { max-width: 200px; overflow: hidden; }
+
+/* ---------- 股票分类浮动列表 ---------- */
+.sector-chip-dropdown .sector-chip {
+  border-radius: 999px;
+}
+
+.sector-floating-menu {
+  min-width: 640px;
+  max-width: min(92vw, 760px);
+  max-height: 360px;
+  overflow: auto;
+  z-index: 1080;
+}
+
+.sector-floating-header {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
+}
+
+@media (max-width: 768px) {
+  .sector-floating-menu {
+    min-width: 92vw;
+    max-width: 92vw;
+  }
+}

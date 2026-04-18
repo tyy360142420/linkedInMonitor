@@ -30,11 +30,19 @@
               <i class="bi bi-speedometer2 me-1"></i>LinkedIn
             </a>
           </li>
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint == 'twitter_page' %}active{% endif %}"
-               href="{{ url_for('twitter_page') }}">
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle {% if request.endpoint == 'twitter_page' or request.endpoint == 'twitter_comparison_page' %}active{% endif %}"
+               href="#" id="twitterDropdown" role="button" data-bs-toggle="dropdown">
               <i class="bi bi-twitter-x me-1"></i>Twitter
             </a>
+            <ul class="dropdown-menu" aria-labelledby="twitterDropdown">
+              <li><a class="dropdown-item" href="{{ url_for('twitter_page') }}">
+                <i class="bi bi-speedometer2 me-2"></i>监控状态
+              </a></li>
+              <li><a class="dropdown-item" href="{{ url_for('twitter_comparison_page') }}">
+                <i class="bi bi-diagram-3 me-2"></i>账户比较
+              </a></li>
+            </ul>
           </li>
           <li class="nav-item">
             <a class="nav-link {% if request.endpoint == 'publishers_page' or request.endpoint == 'publisher_detail' %}active{% endif %}"

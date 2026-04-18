@@ -7,44 +7,143 @@
   <i class="bi bi-bar-chart-fill fs-4 text-success"></i>
   <h4 class="mb-0 fw-bold">股票看板</h4>
   <span class="badge bg-secondary ms-2">共 {{ stocks | length }} 个代码</span>
+  <span class="badge bg-light text-dark border">{{ account_groups | length }} 个账户</span>
 </div>
 
-{% if stocks %}
-<div class="card shadow-sm">
-  <div class="card-body p-0">
-    <table class="table table-hover mb-0">
-      <thead class="table-light text-muted small">
-        <tr>
-          <th class="ps-3" style="width:100px">代码</th>
-          <th style="width:80px">提及次数</th>
-          <th>发布人</th>
-          <th style="width:130px">最近提及</th>
-          <th style="width:100px">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for s in stocks %}
-        <tr>
-          <td class="ps-3">
-            <a href="{{ url_for('stock_detail', ticker=s.ticker) }}"
-               class="badge bg-success text-decoration-none fs-6">{{ s.ticker }}</a>
-          </td>
-          <td>
-            <span class="fw-semibold">{{ s.mention_count }}</span>
-          </td>
-          <td class="text-muted small">{{ s.publishers }}</td>
-          <td class="text-muted small">{{ s.last_mentioned[:16] if s.last_mentioned else '—' }}</td>
-          <td>
-            <a href="{{ url_for('stock_detail', ticker=s.ticker) }}"
-               class="btn btn-sm btn-outline-success">
-              <i class="bi bi-graph-up me-1"></i>走势 &amp; 笔记
-            </a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{% if account_groups %}
+<div class="accordion" id="account-stock-accordion">
+  {% for g in account_groups %}
+  {% set pub = g.publisher %}
+  <div class="accordion-item shadow-sm mb-3 border-0">
+    <h2 class="accordion-header" id="acc-h-{{ pub.id }}">
+      <button class="accordion-button collapsed" type="button"
+              data-bs-toggle="collapse" data-bs-target="#acc-c-{{ pub.id }}"
+              aria-expanded="false" aria-controls="acc-c-{{ pub.id }}">
+        <div class="w-100 d-flex align-items-center gap-2">
+          <i class="bi bi-{{ 'linkedin' if pub.platform == 'linkedin' else 'twitter-x' }}
+             text-{{ 'linkedin' if pub.platform == 'linkedin' else 'twitter' }}"></i>
+          <span class="fw-semibold">{{ pub.name }}</span>
+          <span class="text-muted small">@{{ pub.handle }}</span>
+          <span class="badge bg-success-subtle text-success-emphasis ms-auto">{{ g.stock_count }} 个股票</span>
+          <span class="badge bg-secondary">提及 {{ g.total_mentions }} 次</span>
+        </div>
+      </button>
+    </h2>
+    <div id="acc-c-{{ pub.id }}" class="accordion-collapse collapse"
+         aria-labelledby="acc-h-{{ pub.id }}" data-bs-parent="#account-stock-accordion">
+      <div class="accordion-body p-0">
+        {% if g.sector_groups %}
+        <div class="p-3 border-bottom bg-light-subtle">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <i class="bi bi-diagram-3 text-primary"></i>
+            <span class="fw-semibold">行业分类（点击查看浮动明细）</span>
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+            {% for sg in g.sector_groups %}
+            <div class="dropdown sector-chip-dropdown">
+              <button class="btn btn-sm btn-outline-primary sector-chip"
+                      type="button"
+                      data-bs-toggle="dropdown"
+                      data-bs-auto-close="outside"
+                      aria-expanded="false">
+                {{ sg.sector }}
+                <span class="badge bg-primary-subtle text-primary-emphasis ms-1">{{ sg.stock_count }}</span>
+              </button>
+              <div class="dropdown-menu p-0 shadow sector-floating-menu">
+                <div class="sector-floating-header px-3 py-2 border-bottom">
+                  <div class="fw-semibold">{{ sg.sector }}</div>
+                  <div class="text-muted small">
+                    {{ sg.stock_count }} 个股票 · 提及 {{ sg.total_mentions }} 次
+                    {% if sg.avg_change is not none %}
+                      · 平均 {{ '+' if sg.avg_change > 0 else '' }}{{ sg.avg_change }}%
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-sm mb-0 align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th class="ps-3" style="width:90px">代码</th>
+                        <th style="width:130px">首次提及</th>
+                        <th style="width:120px">提及至今涨幅</th>
+                        <th class="pe-3">细分领域</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for item in sg.items %}
+                      <tr>
+                        <td class="ps-3">
+                          <a href="{{ url_for('stock_detail', ticker=item.ticker) }}"
+                             class="badge bg-success text-decoration-none">{{ item.ticker }}</a>
+                        </td>
+                        <td class="text-muted small">{{ item.first_mentioned[:10] if item.first_mentioned else '—' }}</td>
+                        <td>
+                          {% if item.change_pct_since_mention is not none %}
+                            <span class="badge {{ 'bg-success' if item.is_up_since_mention else 'bg-danger' }}">
+                              {{ '+' if item.change_pct_since_mention > 0 else '' }}{{ item.change_pct_since_mention }}%
+                            </span>
+                          {% else %}
+                            <span class="text-muted small">—</span>
+                          {% endif %}
+                        </td>
+                        <td class="pe-3 text-muted small">{{ item.industry or '未知' }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+        <table class="table table-hover mb-0">
+          <thead class="table-light text-muted small">
+            <tr>
+              <th class="ps-3" style="width:110px">代码</th>
+              <th style="width:90px">提及次数</th>
+              <th style="width:140px">首次提及</th>
+              <th style="width:120px">提及至今涨幅</th>
+              <th style="width:140px">最近提及</th>
+              <th style="width:220px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in g.stocks %}
+            <tr>
+              <td class="ps-3">
+                <a href="{{ url_for('stock_detail', ticker=s.ticker) }}"
+                   class="badge bg-success text-decoration-none fs-6">{{ s.ticker }}</a>
+              </td>
+              <td><span class="fw-semibold">{{ s.mention_count }}</span></td>
+              <td class="text-muted small">{{ s.first_mentioned[:10] if s.first_mentioned else '—' }}</td>
+              <td>
+                {% if s.change_pct_since_mention is not none %}
+                  <span class="badge {{ 'bg-success' if s.is_up_since_mention else 'bg-danger' }}">
+                    {{ '+' if s.change_pct_since_mention > 0 else '' }}{{ s.change_pct_since_mention }}%
+                  </span>
+                {% else %}
+                  <span class="text-muted small">—</span>
+                {% endif %}
+              </td>
+              <td class="text-muted small">{{ s.last_mentioned[:16] if s.last_mentioned else '—' }}</td>
+              <td>
+                <a href="{{ url_for('stock_detail', ticker=s.ticker) }}" class="btn btn-sm btn-outline-success me-1">
+                  <i class="bi bi-graph-up me-1"></i>走势 &amp; 笔记
+                </a>
+                <a href="{{ url_for('publisher_detail', pub_id=pub.id) }}#tab-stocks" class="btn btn-sm btn-outline-secondary">
+                  <i class="bi bi-person-lines-fill me-1"></i>账户详情
+                </a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
+  {% endfor %}
 </div>
 {% else %}
 <div class="text-center text-muted py-5 mt-4">

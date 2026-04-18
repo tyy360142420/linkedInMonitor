@@ -335,6 +335,109 @@ def api_twitter_status():
     return jsonify(twitter_tracker.get_state())
 
 
+@app.route("/twitter/comparison", methods=["GET"])
+def twitter_comparison_page():
+    """Twitter 账户比较页面 - 展示多个账户的共同关注股票和其他信息。"""
+    cfg = cfg_module.get_all()
+    accounts = [p for p in db.get_publishers() if p["platform"] == "twitter"]
+    return render_template("twitter_comparison.html", cfg=cfg, accounts=accounts)
+
+
+@app.route("/api/twitter/comparison", methods=["POST"])
+def api_twitter_comparison():
+    """获取多个 Twitter 账户的比较数据。"""
+    data = request.get_json(force=True) or {}
+    selected_ids = data.get("account_ids", [])
+    
+    if not selected_ids:
+        return jsonify({"ok": False, "error": "请至少选择一个账户"}), 400
+    
+    # 验证所有 ID 都是有效的 Twitter 账户
+    all_accounts = db.get_publishers()
+    valid_twitter_ids = {p["id"] for p in all_accounts if p["platform"] == "twitter"}
+    
+    selected_ids = [int(id) for id in selected_ids if int(id) in valid_twitter_ids]
+    
+    if not selected_ids:
+        return jsonify({"ok": False, "error": "没有找到有效的 Twitter 账户"}), 400
+    
+    # 获取选中的账户信息
+    selected_accounts = [p for p in all_accounts if p["id"] in selected_ids]
+    
+    # 获取共同提及的股票
+    common_stocks = db.get_common_stocks_for_publishers(selected_ids)
+    
+    # 获取所有提及的股票（包括非共同的）
+    all_stocks = db.get_all_stocks_for_publishers(selected_ids)
+    
+    # 将所有股票按代码分组
+    stocks_by_ticker = {}
+    for stock in all_stocks:
+        ticker = stock["ticker"]
+        if ticker not in stocks_by_ticker:
+            stocks_by_ticker[ticker] = {
+                "ticker": ticker,
+                "total_mentions": 0,
+                "first_mentioned": None,
+                "last_mentioned": None,
+                "mentions_by_account": {}
+            }
+        
+        account_key = f"{stock['handle']}"
+        stocks_by_ticker[ticker]["mentions_by_account"][account_key] = {
+            "handle": stock["handle"],
+            "name": stock["name"],
+            "mention_count": stock["mention_count"],
+            "first_mentioned": stock["first_mentioned"],
+            "last_mentioned": stock["last_mentioned"]
+        }
+        stocks_by_ticker[ticker]["total_mentions"] += stock["mention_count"]
+        
+        # 更新最早和最晚提及时间
+        if not stocks_by_ticker[ticker]["first_mentioned"] or stock["first_mentioned"] < stocks_by_ticker[ticker]["first_mentioned"]:
+            stocks_by_ticker[ticker]["first_mentioned"] = stock["first_mentioned"]
+        if not stocks_by_ticker[ticker]["last_mentioned"] or stock["last_mentioned"] > stocks_by_ticker[ticker]["last_mentioned"]:
+            stocks_by_ticker[ticker]["last_mentioned"] = stock["last_mentioned"]
+    
+    # 添加股票性能数据
+    for ticker, stock_data in stocks_by_ticker.items():
+        if stock_data["first_mentioned"]:
+            perf = sd.get_change_since_date(ticker, stock_data["first_mentioned"])
+            stock_data.update(perf)
+    
+    common_followings = db.get_common_followings_for_publishers(selected_ids)
+    sync_status = db.get_following_sync_status(selected_ids)
+
+    return jsonify({
+        "ok": True,
+        "selected_accounts": selected_accounts,
+        "common_stocks": common_stocks,
+        "all_stocks_by_ticker": stocks_by_ticker,
+        "common_count": len(common_stocks),
+        "common_followings": common_followings,
+        "common_following_count": len(common_followings),
+        "sync_status": sync_status,
+    })
+
+
+@app.route("/api/twitter/sync-following/<int:pub_id>", methods=["POST"])
+def api_twitter_sync_following(pub_id: int):
+    pub = db.get_publisher(pub_id)
+    if not pub or pub["platform"] != "twitter":
+        return jsonify({"ok": False, "error": "账户不存在"}), 404
+
+    started = twitter_tracker.start_following_sync(pub_id, pub["handle"], min_followers=20000)
+    if not started:
+        return jsonify({"ok": False, "error": f"@{pub['handle']} 正在同步中，请稍候"}), 409
+    return jsonify({"ok": True, "message": f"@{pub['handle']} 关注列表同步已启动"})
+
+
+@app.route("/api/twitter/sync-following/<int:pub_id>/status", methods=["GET"])
+def api_twitter_sync_following_status(pub_id: int):
+    status = twitter_tracker.get_sync_status(pub_id)
+    return jsonify({"ok": True, "status": status})
+
+
 # ================================================================== #
 # 发布人管理
 # ================================================================== #
@@ -413,7 +516,107 @@ def api_delete_publisher(pub_id: int):
 @app.route("/stocks", methods=["GET"])
 def stocks_page():
     all_stocks = db.get_all_stocks()
-    return render_template("stocks.html", stocks=all_stocks)
+    publishers = db.get_publishers()
+
+    account_groups = []
+    for pub in publishers:
+        stocks = db.get_stocks_for_publisher(pub["id"])
+        if not stocks:
+            continue
+
+        recs = db.get_recommendations_for_publisher(pub["id"])
+        perf_by_ticker = {}
+        for rec in recs:
+            ticker = rec.get("ticker")
+            first_mentioned = rec.get("first_mentioned")
+            if not ticker or not first_mentioned:
+                continue
+            perf = sd.get_change_since_date(ticker, first_mentioned)
+            perf_by_ticker[ticker] = {
+                "first_mentioned": first_mentioned,
+                "change_pct_since_mention": perf.get("change_pct"),
+                "is_up_since_mention": perf.get("is_up"),
+            }
+
+        for s in stocks:
+            p = perf_by_ticker.get(s.get("ticker"), {})
+            s["first_mentioned"] = p.get("first_mentioned")
+            s["change_pct_since_mention"] = p.get("change_pct_since_mention")
+            s["is_up_since_mention"] = p.get("is_up_since_mention")
+
+            sector_info = sd.get_ticker_sector(s.get("ticker", ""))
+            s["sector"] = sector_info.get("sector") or "未分类"
+            s["industry"] = sector_info.get("industry") or "未知"
+
+        sector_buckets = {}
+        for s in stocks:
+            key = s.get("sector") or "未分类"
+            if key not in sector_buckets:
+                sector_buckets[key] = []
+            sector_buckets[key].append(
+                {
+                    "ticker": s.get("ticker"),
+                    "mention_count": s.get("mention_count"),
+                    "first_mentioned": s.get("first_mentioned"),
+                    "change_pct_since_mention": s.get("change_pct_since_mention"),
+                    "is_up_since_mention": s.get("is_up_since_mention"),
+                    "industry": s.get("industry"),
+                }
+            )
+
+        sector_groups = []
+        for sector_name, items in sector_buckets.items():
+            valid_changes = [
+                x.get("change_pct_since_mention")
+                for x in items
+                if x.get("change_pct_since_mention") is not None
+            ]
+            avg_change = (
+                round(sum(valid_changes) / len(valid_changes), 2)
+                if valid_changes
+                else None
+            )
+            sector_groups.append(
+                {
+                    "sector": sector_name,
+                    "stock_count": len(items),
+                    "total_mentions": sum(int(x.get("mention_count") or 0) for x in items),
+                    "avg_change": avg_change,
+                    "items": items,
+                }
+            )
+
+        sector_groups.sort(
+            key=lambda g: (
+                -g["stock_count"],
+                -g["total_mentions"],
+                g["sector"],
+            )
+        )
+
+        account_groups.append(
+            {
+                "publisher": pub,
+                "stocks": stocks,
+                "sector_groups": sector_groups,
+                "stock_count": len(stocks),
+                "total_mentions": sum(int(s.get("mention_count") or 0) for s in stocks),
+            }
+        )
+
+    account_groups.sort(
+        key=lambda g: (
+            -g["stock_count"],
+            -g["total_mentions"],
+            (g["publisher"].get("name") or "").lower(),
+        )
+    )
+
+    return render_template(
+        "stocks.html",
+        stocks=all_stocks,
+        account_groups=account_groups,
+    )
 
 
 @app.route("/stock/<ticker>", methods=["GET"])
@@ -434,12 +637,31 @@ def stock_detail(ticker: str):
 @app.route("/api/stock/<ticker>/history", methods=["GET"])
 def api_stock_history(ticker: str):
     period = request.args.get("period", "3mo")
-    if period not in ("1mo", "3mo", "6mo", "1y"):
+    if period not in ("1mo", "3mo", "6mo", "1y", "mention"):
         period = "3mo"
-    data = sd.get_price_history(ticker.upper(), period)
+    ticker_u = ticker.upper()
+
+    if period == "mention":
+        first_mentioned = db.get_first_mentioned_for_ticker(ticker_u)
+        if first_mentioned:
+            data = sd.get_price_history_since_date(ticker_u, first_mentioned)
+            data["period"] = "mention"
+            data["period_label"] = "提及至今"
+            data["first_mentioned"] = first_mentioned
+        else:
+            data = sd.get_price_history(ticker_u, "3mo")
+            data["period"] = "3mo"
+            data["period_label"] = "3月"
+            data["first_mentioned"] = None
+            data["error"] = "暂无该股票的提及记录，已显示最近3个月走势"
+    else:
+        data = sd.get_price_history(ticker_u, period)
+        data["period"] = period
+        data["first_mentioned"] = db.get_first_mentioned_for_ticker(ticker_u)
+
     include_news = request.args.get("include_news", "1") != "0"
     if include_news:
-        news = sd.get_stock_news(ticker.upper(), limit=20)
+        news = sd.get_stock_news(ticker_u, limit=20)
         data["news"] = news
         data["news_summary"] = sd.summarize_news_impacts(news)
     else:

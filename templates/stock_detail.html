@@ -12,6 +12,8 @@
   <span id="stock-price" class="ms-auto fw-bold fs-5"></span>
 </div>
 
+<div id="period-info" class="small text-muted mb-2"></div>
+
 <!-- 图表 -->
 <div class="card shadow-sm mb-4">
   <div class="card-header d-flex align-items-center justify-content-between py-2">
@@ -21,6 +23,7 @@
       <button class="btn btn-outline-secondary active" data-period="3mo">3 月</button>
       <button class="btn btn-outline-secondary" data-period="6mo">6 月</button>
       <button class="btn btn-outline-secondary" data-period="1y">1 年</button>
+      <button class="btn btn-outline-secondary" data-period="mention">提及至今</button>
     </div>
   </div>
   <div class="card-body">
@@ -218,6 +221,17 @@
         : "";
       document.getElementById("stock-price").innerHTML =
         `<span style="color:${color}">${d.current_price.toFixed(2)} ${d.currency}${changeStr}</span>`;
+    }
+
+    const periodInfoEl = document.getElementById("period-info");
+    if (period === "mention" && d.first_mentioned) {
+      const since = String(d.first_mentioned).slice(0, 10);
+      const perfText = d.change_pct == null
+        ? ""
+        : `，涨幅 ${d.change_pct > 0 ? "+" : ""}${d.change_pct}%`;
+      periodInfoEl.textContent = `时间范围：首次提及 (${since}) 到当前${perfText}`;
+    } else {
+      periodInfoEl.textContent = "";
     }
 
     chartDates = Array.isArray(d.dates) ? d.dates : [];

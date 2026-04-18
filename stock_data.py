@@ -49,6 +49,28 @@ _EVENT_RULES = [
     ("宏观", ["inflation", "fed", "interest rate", "cpi", "gdp", "利率", "通胀", "宏观"]),
 ]
 
+_RATE_LIMIT_KEYWORD = "too many requests"
+_RATE_LIMIT_ERROR = "行情接口限流，请稍后重试"
+
+_SECTOR_CACHE: Dict[str, Dict] = {}
+
+_SECTOR_CN_MAP = {
+    "Technology": "科技",
+    "Communication Services": "通信服务",
+    "Consumer Cyclical": "可选消费",
+    "Consumer Defensive": "必需消费",
+    "Financial Services": "金融",
+    "Healthcare": "医疗健康",
+    "Industrials": "工业",
+    "Basic Materials": "基础材料",
+    "Real Estate": "房地产",
+    "Energy": "能源",
+    "Utilities": "公用事业",
+    "ETF": "ETF/指数",
+    "Index": "ETF/指数",
+    "Cryptocurrency": "加密资产",
+}
+
 
 def extract_tickers(text: str) -> List[str]:
     """从文本中提取 $XXX 格式的股票代码，去重并过滤停用词。"""
@@ -93,6 +115,113 @@ def _http_get_json(url: str, timeout: int = 10) -> Dict:
     )
     with urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _normalize_sector_name(sector: str | None, ticker: str) -> str:
+    s = (sector or "").strip()
+    if ticker.upper() in _CRYPTO_SYMBOLS:
+        return "加密资产"
+    if not s:
+        return "未分类"
+    return _SECTOR_CN_MAP.get(s, s)
+
+
+def get_ticker_sector(ticker: str) -> Dict:
+    """
+    获取股票所属行业与细分领域。
+
+    返回结构:
+    {
+      "ticker": "AAPL",
+      "sector": "科技",
+      "industry": "Consumer Electronics",
+      "raw_sector": "Technology",
+      "source": "yfinance"
+    }
+    """
+    ticker_u = (ticker or "").upper().strip()
+    base = {
+        "ticker": ticker_u,
+        "sector": "未分类",
+        "industry": "未知",
+        "raw_sector": None,
+        "source": "fallback",
+    }
+
+    if not ticker_u:
+        return base
+
+    if ticker_u in _SECTOR_CACHE:
+        return dict(_SECTOR_CACHE[ticker_u])
+
+    if ticker_u in _CRYPTO_SYMBOLS:
+        base["sector"] = "加密资产"
+        base["industry"] = "Crypto"
+        _SECTOR_CACHE[ticker_u] = dict(base)
+        return base
+
+    # 先尝试 yfinance info，拿不到时再走 Yahoo quoteSummary 兜底。
+    try:
+        import yfinance as yf
+
+        for symbol in _ticker_candidates(ticker_u):
+            try:
+                info = yf.Ticker(symbol).info or {}
+            except Exception:
+                info = {}
+
+            raw_sector = (info.get("sector") or info.get("category") or "").strip()
+            industry = (info.get("industry") or info.get("industryDisp") or "").strip()
+            quote_type = str(info.get("quoteType") or "").strip()
+
+            if not raw_sector and quote_type.upper() in {"ETF", "MUTUALFUND", "INDEX"}:
+                raw_sector = "ETF"
+
+            if raw_sector or industry:
+                base["raw_sector"] = raw_sector or None
+                base["sector"] = _normalize_sector_name(raw_sector, ticker_u)
+                base["industry"] = industry or "未知"
+                base["source"] = "yfinance"
+                _SECTOR_CACHE[ticker_u] = dict(base)
+                return base
+    except Exception:
+        pass
+
+    try:
+        for symbol in _ticker_candidates(ticker_u):
+            url = (
+                f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
+                "?modules=assetProfile,quoteType"
+            )
+            payload = _http_get_json(url)
+            result = (payload.get("quoteSummary", {}).get("result") or [None])[0]
+            if not result:
+                continue
+
+            asset_profile = result.get("assetProfile") or {}
+            quote_type = result.get("quoteType") or {}
+
+            raw_sector = (asset_profile.get("sector") or "").strip()
+            industry = (asset_profile.get("industry") or "").strip()
+            qtype = str(quote_type.get("quoteType") or "").strip().upper()
+
+            if not raw_sector and qtype in {"ETF", "MUTUALFUND", "INDEX"}:
+                raw_sector = "ETF"
+            elif not raw_sector and qtype == "CRYPTOCURRENCY":
+                raw_sector = "Cryptocurrency"
+
+            if raw_sector or industry:
+                base["raw_sector"] = raw_sector or None
+                base["sector"] = _normalize_sector_name(raw_sector, ticker_u)
+                base["industry"] = industry or "未知"
+                base["source"] = "yahoo_api"
+                _SECTOR_CACHE[ticker_u] = dict(base)
+                return base
+    except Exception:
+        pass
+
+    _SECTOR_CACHE[ticker_u] = dict(base)
+    return base
 
 
 def _yahoo_chart_fallback(symbol: str, period: str) -> Dict | None:
@@ -269,8 +398,8 @@ def get_price_history(ticker: str, period: str = "3mo") -> Dict:
                 base["closes"] = fb["closes"]
                 return base
 
-        if last_err and "too many requests" in last_err.lower():
-            base["error"] = "行情接口限流，请稍后重试"
+        if last_err and _RATE_LIMIT_KEYWORD in last_err.lower():
+            base["error"] = _RATE_LIMIT_ERROR
         else:
             base["error"] = f"没有找到 {ticker} 的历史数据，请确认代码正确"
         return base
@@ -311,33 +440,14 @@ def get_change_since_date(ticker: str, since_date: str) -> Dict:
     }
 
     try:
-        import yfinance as yf
-
         # 仅保留 YYYY-MM-DD，避免数据库 datetime 字符串带时分秒
         since_str = (since_date or "")[:10]
         start_dt = datetime.strptime(since_str, "%Y-%m-%d")
         end_dt = datetime.now() + timedelta(days=1)
 
-        hist = None
-        last_err = None
-        for symbol in _ticker_candidates(ticker):
-            try:
-                cand_hist = yf.Ticker(symbol).history(
-                    start=start_dt.strftime("%Y-%m-%d"),
-                    end=end_dt.strftime("%Y-%m-%d"),
-                )
-            except Exception as exc:
-                last_err = str(exc)
-                continue
-            if not cand_hist.empty:
-                hist = cand_hist
-                break
-
+        hist, _, last_err = _fetch_history_in_date_range(ticker, start_dt, end_dt)
         if hist is None or hist.empty:
-            if last_err and "too many requests" in last_err.lower():
-                out["error"] = "行情接口限流，请稍后重试"
-            else:
-                out["error"] = "无可用历史数据"
+            out["error"] = _RATE_LIMIT_ERROR if (last_err and _RATE_LIMIT_KEYWORD in last_err.lower()) else "无可用历史数据"
             return out
 
         closes = hist["Close"].dropna().tolist()
@@ -370,6 +480,94 @@ def get_change_since_date(ticker: str, since_date: str) -> Dict:
         logger.error("计算 %s 从 %s 以来涨跌幅失败: %s", ticker, since_date, exc)
         out["error"] = str(exc)
         return out
+
+
+def get_price_history_since_date(ticker: str, since_date: str) -> Dict:
+    """
+    获取股票从某日期到当前的价格历史，并计算该区间累计涨跌幅。
+    返回结构与 get_price_history 一致，change_pct 表示区间涨跌幅。
+    """
+    ticker = ticker.upper()
+    base: Dict = {
+        "ticker": ticker,
+        "name": ticker,
+        "currency": "USD",
+        "current_price": None,
+        "change_pct": None,
+        "dates": [],
+        "closes": [],
+        "error": None,
+    }
+
+    try:
+        import yfinance as yf
+
+        since_str = (since_date or "")[:10]
+        start_dt = datetime.strptime(since_str, "%Y-%m-%d")
+        end_dt = datetime.now() + timedelta(days=1)
+
+        hist, selected_symbol, last_err = _fetch_history_in_date_range(ticker, start_dt, end_dt)
+        if hist is None or hist.empty:
+            base["error"] = _RATE_LIMIT_ERROR if (last_err and _RATE_LIMIT_KEYWORD in last_err.lower()) else "无可用历史数据"
+            return base
+
+        closes = hist["Close"].dropna().tolist()
+        if not closes:
+            base["error"] = "无可用收盘价"
+            return base
+
+        base["dates"] = hist.index.strftime("%Y-%m-%d").tolist()
+        base["closes"] = [round(float(c), 2) for c in closes]
+        base["current_price"] = round(float(closes[-1]), 2)
+
+        start_price = float(closes[0])
+        if start_price != 0:
+            base["change_pct"] = round((float(closes[-1]) - start_price) / start_price * 100, 2)
+
+        try:
+            info = yf.Ticker(selected_symbol).info or {}
+        except Exception:
+            info = {}
+        base["name"] = info.get("longName") or info.get("shortName") or selected_symbol
+        base["currency"] = info.get("currency") or "USD"
+
+        return base
+
+    except ValueError:
+        base["error"] = f"日期格式错误: {since_date}"
+        return base
+    except ImportError:
+        base["error"] = "yfinance 未安装，请执行 pip install yfinance"
+        return base
+    except Exception as exc:
+        logger.error("获取 %s 从 %s 起历史价格失败: %s", ticker, since_date, exc)
+        base["error"] = str(exc)
+        return base
+
+
+def _fetch_history_in_date_range(ticker: str, start_dt: datetime, end_dt: datetime):
+    """尝试候选 ticker 形态，返回 (hist, selected_symbol, last_err)。"""
+    import yfinance as yf
+
+    hist = None
+    last_err = None
+    selected_symbol = ticker.upper()
+    for symbol in _ticker_candidates(ticker):
+        try:
+            cand_hist = yf.Ticker(symbol).history(
+                start=start_dt.strftime("%Y-%m-%d"),
+                end=end_dt.strftime("%Y-%m-%d"),
+            )
+        except Exception as exc:
+            last_err = str(exc)
+            continue
+        if cand_hist.empty:
+            continue
+        hist = cand_hist
+        selected_symbol = symbol
+        break
+
+    return hist, selected_symbol, last_err
 
 
 def _parse_news_datetime(item: Dict) -> datetime | None:
