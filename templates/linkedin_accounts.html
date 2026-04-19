@@ -29,12 +29,18 @@
         {% for account in accounts %}
         <tr data-profile-url="{{ account.profile_url }}">
           <td>
-            <a href="{{ account.profile_url }}" target="_blank" rel="noopener"
-               class="text-decoration-none text-linkedin fw-semibold">
-              <i class="bi bi-link-45deg me-2"></i>
-              {{ account.profile_url.split('/')[-1] }}
-            </a>
-            <div class="small text-muted mt-1">{{ account.profile_url }}</div>
+            <div class="account-chip">
+              <div class="account-avatar account-avatar--linkedin">
+                <span class="account-avatar__letter">{{ (account.name or account.profile_url.split('/')[-1] or '?')[:1] }}</span>
+              </div>
+              <div class="account-chip__body">
+                <a href="{{ account.profile_url }}" target="_blank" rel="noopener"
+                   class="text-decoration-none text-linkedin fw-semibold account-handle d-inline-block mw-100">
+                  {{ account.profile_url.split('/')[-1] }}
+                </a>
+                <div class="small text-muted mt-1 account-name">{{ account.profile_url }}</div>
+              </div>
+            </div>
           </td>
           <td>
             <span class="account-name">{{ account.name }}</span>

@@ -103,8 +103,14 @@
           <div class="account-checkbox-item list-group-item">
             <div class="d-flex align-items-center mb-1">
               <input type="checkbox" class="account-checkbox" value="{{ acc.id }}" />
-              <div class="flex-grow-1 ms-2">
-                <div class="fw-semibold text-twitter">@{{ acc.handle }}</div>
+              <div class="account-avatar account-avatar--twitter account-avatar--sm ms-2">
+                <span class="account-avatar__letter">{{ (acc.name or acc.handle or '?')[:1] }}</span>
+              </div>
+              <div class="flex-grow-1 ms-2 min-w-0">
+                <div class="fw-semibold text-twitter account-handle">@{{ acc.handle }}</div>
+                {% if acc.name and acc.name != acc.handle and acc.name != '@' ~ acc.handle %}
+                <div class="text-muted" style="font-size:.78rem; line-height:1.2;">{{ acc.name }}</div>
+                {% endif %}
                 <div class="text-muted small" id="sync-status-{{ acc.id }}">—</div>
               </div>
               <button class="btn btn-xs btn-outline-secondary ms-1"

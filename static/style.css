@@ -119,6 +119,72 @@
   color: #000;
 }
 
+/* ---------- 账户头像 ---------- */
+.account-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.account-chip__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.account-avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, #5c6670 0%, #232a31 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
+}
+
+.account-avatar--sm {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.8rem;
+}
+
+.account-avatar--lg {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.05rem;
+}
+
+.account-avatar--twitter {
+  background: linear-gradient(135deg, #20242a 0%, #000 100%);
+}
+
+.account-avatar--linkedin {
+  background: linear-gradient(135deg, #2b7cd3 0%, #0a66c2 55%, #004182 100%);
+}
+
+.account-avatar__letter {
+  transform: translateY(-0.02em);
+}
+
+.account-handle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- 日志查看器 ---------- */
 .log-viewer {
   background: #1e1e1e;
