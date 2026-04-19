@@ -191,6 +191,7 @@
               <thead class="table-light">
                 <tr>
                   <th style="width: 80px">代码</th>
+                  <th style="width: 150px">行业</th>
                   <th>提及账户</th>
                   <th style="width: 100px">总提及数</th>
                   <th style="width: 120px">性能</th>
@@ -215,6 +216,7 @@
               <thead class="table-light">
                 <tr>
                   <th style="width: 80px">代码</th>
+                  <th style="width: 150px">行业</th>
                   <th>提及详情</th>
                   <th style="width: 100px">总提及数</th>
                   <th style="width: 120px">性能</th>
@@ -425,11 +427,14 @@
       csCard.style.display = 'block';
       document.getElementById('common-count').textContent = common_count;
       document.getElementById('common-stocks-body').innerHTML = common_stocks.map(stock => {
+        const sector = stock.sector || '未分类';
+        const industry = stock.industry || '未知';
+        const sectorHtml = '<div class="small fw-semibold">' + sector + '</div><div class="text-muted" style="font-size:.75rem;">' + industry + '</div>';
         const perf = (stock.change_pct != null)
           ? '<span class="' + (stock.is_up ? 'change-positive' : 'change-negative') + '">' +
             (stock.is_up ? '↑' : '↓') + ' ' + Math.abs(stock.change_pct).toFixed(2) + '%</span>'
           : '<span class="text-muted">—</span>';
-        return '<tr class="stock-row-common"><td><strong>' + stock.ticker + '</strong></td><td>' +
+        return '<tr class="stock-row-common"><td><strong>' + stock.ticker + '</strong></td><td>' + sectorHtml + '</td><td>' +
           stock.mentioned_by.split(',').map(h => '<span class="account-mention-badge">@' + h + '</span>').join('') +
           '</td><td>' + stock.total_mentions + '</td><td>' + perf +
           '</td><td><a href="/stock/' + stock.ticker + '" class="btn btn-sm btn-outline-primary">' +
@@ -448,6 +453,9 @@
       );
       document.getElementById('all-stocks-body').innerHTML = tickers.map(ticker => {
         const stock = all_stocks_by_ticker[ticker];
+        const sector = stock.sector || '未分类';
+        const industry = stock.industry || '未知';
+        const sectorHtml = '<div class="small fw-semibold">' + sector + '</div><div class="text-muted" style="font-size:.75rem;">' + industry + '</div>';
         const mentions = Object.values(stock.mentions_by_account).map(m =>
           '<div class="small"><span class="badge bg-info">@' + m.handle + '</span> <span class="text-muted">' + m.mention_count + '×</span></div>'
         ).join('');
@@ -455,7 +463,7 @@
           ? '<span class="' + (stock.is_up ? 'change-positive' : 'change-negative') + '">' +
             (stock.is_up ? '↑' : '↓') + ' ' + Math.abs(stock.change_pct).toFixed(2) + '%</span>'
           : '<span class="text-muted">—</span>';
-        return '<tr><td><strong>' + ticker + '</strong></td><td>' + mentions + '</td><td>' + stock.total_mentions + '</td><td>' + perf +
+        return '<tr><td><strong>' + ticker + '</strong></td><td>' + sectorHtml + '</td><td>' + mentions + '</td><td>' + stock.total_mentions + '</td><td>' + perf +
           '</td><td><a href="/stock/' + ticker + '" class="btn btn-sm btn-outline-primary">' +
           '<i class="bi bi-arrow-right"></i></a></td></tr>';
       }).join('');

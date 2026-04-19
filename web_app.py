@@ -366,6 +366,10 @@ def api_twitter_comparison():
     
     # 获取共同提及的股票
     common_stocks = db.get_common_stocks_for_publishers(selected_ids)
+    for stock in common_stocks:
+        sector_info = sd.get_ticker_sector(stock["ticker"])
+        stock["sector"] = sector_info.get("sector") or "未分类"
+        stock["industry"] = sector_info.get("industry") or "未知"
     
     # 获取所有提及的股票（包括非共同的）
     all_stocks = db.get_all_stocks_for_publishers(selected_ids)
@@ -401,6 +405,9 @@ def api_twitter_comparison():
     
     # 添加股票性能数据
     for ticker, stock_data in stocks_by_ticker.items():
+        sector_info = sd.get_ticker_sector(ticker)
+        stock_data["sector"] = sector_info.get("sector") or "未分类"
+        stock_data["industry"] = sector_info.get("industry") or "未知"
         if stock_data["first_mentioned"]:
             perf = sd.get_change_since_date(ticker, stock_data["first_mentioned"])
             stock_data.update(perf)
