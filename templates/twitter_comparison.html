@@ -207,7 +207,7 @@
       <!-- 所有股票表 -->
       <div class="card shadow-sm" id="all-stocks-card" style="display: none;">
         <div class="card-header fw-semibold">
-          <i class="bi bi-graph-up me-2"></i>所有提及的股票
+          <i class="bi bi-graph-up me-2"></i><span id="all-stocks-title">所有提及的股票</span>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -363,10 +363,13 @@
   function displayComparisonResults(data) {
     const { selected_accounts, common_stocks, all_stocks_by_ticker, common_count,
             common_followings, common_following_count, sync_status } = data;
+    const singleSelection = selected_accounts.length === 1;
+    const multiSelection = selected_accounts.length > 1;
 
     document.getElementById('selected-accounts-text').textContent = selected_accounts.length + ' 个账户';
     document.getElementById('selected-handles').innerHTML =
       selected_accounts.map(a => '<span class="badge bg-secondary me-1">@' + a.handle + '</span>').join('');
+    document.getElementById('all-stocks-title').textContent = singleSelection ? '该账户提及的股票' : '所有提及的股票';
 
     // ── 共同关注人 ──────────────────────────────
     const hasAnySync = sync_status && sync_status.some(s => s.synced_following_count > 0);
@@ -418,7 +421,7 @@
 
     // ── 共同 call 的股票 ─────────────────────────
     const csCard = document.getElementById('common-stocks-card');
-    if (common_count > 0) {
+    if (multiSelection && common_count > 0) {
       csCard.style.display = 'block';
       document.getElementById('common-count').textContent = common_count;
       document.getElementById('common-stocks-body').innerHTML = common_stocks.map(stock => {
@@ -436,8 +439,8 @@
       csCard.style.display = 'none';
     }
 
-    // ── 所有股票 ────────────────────────────────
-    if (Object.keys(all_stocks_by_ticker).length > 0) {
+    // ── 单账户股票列表 ───────────────────────────
+    if (singleSelection && Object.keys(all_stocks_by_ticker).length > 0) {
       allStocksCard.style.display = 'block';
       noResults.style.display = 'none';
       const tickers = Object.keys(all_stocks_by_ticker).sort(
@@ -445,7 +448,6 @@
       );
       document.getElementById('all-stocks-body').innerHTML = tickers.map(ticker => {
         const stock = all_stocks_by_ticker[ticker];
-        const isCommon = common_count > 0 && Object.keys(stock.mentions_by_account).length === selected_accounts.length;
         const mentions = Object.values(stock.mentions_by_account).map(m =>
           '<div class="small"><span class="badge bg-info">@' + m.handle + '</span> <span class="text-muted">' + m.mention_count + '×</span></div>'
         ).join('');
@@ -453,15 +455,20 @@
           ? '<span class="' + (stock.is_up ? 'change-positive' : 'change-negative') + '">' +
             (stock.is_up ? '↑' : '↓') + ' ' + Math.abs(stock.change_pct).toFixed(2) + '%</span>'
           : '<span class="text-muted">—</span>';
-        return '<tr' + (isCommon ? ' class="table-success"' : '') + '><td><strong>' + ticker + '</strong> ' +
-          (isCommon ? '<span class="badge" style="background:#198754">共</span>' : '') +
-          '</td><td>' + mentions + '</td><td>' + stock.total_mentions + '</td><td>' + perf +
+        return '<tr><td><strong>' + ticker + '</strong></td><td>' + mentions + '</td><td>' + stock.total_mentions + '</td><td>' + perf +
           '</td><td><a href="/stock/' + ticker + '" class="btn btn-sm btn-outline-primary">' +
           '<i class="bi bi-arrow-right"></i></a></td></tr>';
       }).join('');
+    } else if (multiSelection) {
+      allStocksCard.style.display = 'none';
+      noResults.style.display = common_count > 0 ? 'none' : 'block';
+      if (common_count === 0) {
+        noResults.innerHTML = '<i class="bi bi-intersect fs-1 d-block mb-2"></i><p>所选账户暂时没有共同提及的股票</p>';
+      }
     } else {
       allStocksCard.style.display = 'none';
       noResults.style.display = 'block';
+      noResults.innerHTML = '<i class="bi bi-inbox fs-1 d-block mb-2"></i><p>暂无数据，请选择账户并确保有股票提及记录</p>';
     }
 
     comparisonResult.classList.add('show');
