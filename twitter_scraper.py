@@ -7,7 +7,9 @@ twitter_scraper.py
 import hashlib
 import logging
 import os
+import re
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -75,12 +77,14 @@ class TwitterScraper:
         self._login_retry_used = False
         self._primary_window_handle: Optional[str] = None
         self.last_login_error: str = ""
+        self._active_profile_dir: Optional[str] = None
+        self._temporary_profile_dir: Optional[str] = None
 
     # ------------------------------------------------------------------ #
     # 驱动初始化
     # ------------------------------------------------------------------ #
 
-    def _build_edge_options(self, profile_path: str) -> EdgeOptions:
+    def _build_edge_options(self, profile_path: Optional[str] = None) -> EdgeOptions:
         opts = EdgeOptions()
         if self.headless:
             opts.add_argument("--headless=new")
@@ -93,6 +97,11 @@ class TwitterScraper:
         opts.add_argument("--disable-features=TranslateUI")
         opts.add_argument("--disable-popup-blocking")
         opts.add_argument("--disable-notifications")
+        opts.add_argument("--disable-extensions")
+        opts.add_argument("--disable-background-networking")
+        opts.add_argument("--metrics-recording-only")
+        opts.add_argument("--password-store=basic")
+        opts.add_argument("--remote-debugging-pipe")
         opts.add_argument("--lang=en-US,en;q=0.9")
         opts.add_argument("--window-size=1920,1080")
         # 禁用 GPU 渲染进程，防止 AMD/GPU 驱动错误导致 Chrome instance exited
@@ -107,8 +116,9 @@ class TwitterScraper:
         if edge_binary:
             opts.binary_location = edge_binary
 
-        opts.add_argument(f"--user-data-dir={profile_path}")
-        opts.add_argument("--profile-directory=Default")
+        if profile_path:
+            opts.add_argument(f"--user-data-dir={profile_path}")
+            opts.add_argument("--profile-directory=Default")
         return opts
 
     @staticmethod
@@ -122,13 +132,24 @@ class TwitterScraper:
             except OSError:
                 pass
 
+    def _start_driver_with_profile(self, profile_path: Optional[str]) -> None:
+        if profile_path:
+            os.makedirs(profile_path, exist_ok=True)
+            self._remove_lock_files(profile_path)
+        self._driver = webdriver.Edge(options=self._build_edge_options(profile_path))
+        self._active_profile_dir = profile_path
+
+    def _build_fallback_profiles(self) -> List[Optional[str]]:
+        base_dir = os.path.dirname(os.path.abspath(self.session_profile_dir)) or None
+        runtime_profile = os.path.abspath(f"{self.session_profile_dir}_runtime")
+        temp_profile = tempfile.mkdtemp(prefix="tw-edge-profile-", dir=base_dir)
+        self._temporary_profile_dir = temp_profile
+        return [runtime_profile, temp_profile, None]
+
     def _init_driver(self) -> None:
         profile_path = os.path.abspath(self.session_profile_dir)
-        os.makedirs(profile_path, exist_ok=True)
-        self._remove_lock_files(profile_path)
-
         try:
-            self._driver = webdriver.Edge(options=self._build_edge_options(profile_path))
+            self._start_driver_with_profile(profile_path)
         except WebDriverException as exc:
             err_text = str(exc).lower()
             fallback_needed = (
@@ -139,15 +160,22 @@ class TwitterScraper:
             if not fallback_needed:
                 raise
 
-            fallback_profile = os.path.abspath(f"{self.session_profile_dir}_runtime")
-            os.makedirs(fallback_profile, exist_ok=True)
-            self._remove_lock_files(fallback_profile)
-            logger.warning(
-                "Twitter Edge 启动失败，改用备用 profile 重试。原 profile: %s, 备用 profile: %s",
-                profile_path,
-                fallback_profile,
-            )
-            self._driver = webdriver.Edge(options=self._build_edge_options(fallback_profile))
+            last_exc = exc
+            for fallback_profile in self._build_fallback_profiles():
+                fallback_label = fallback_profile or "<clean ephemeral session>"
+                logger.warning(
+                    "Twitter Edge 启动失败，改用备用 profile 重试。原 profile: %s, 备用 profile: %s",
+                    profile_path,
+                    fallback_label,
+                )
+                try:
+                    self._start_driver_with_profile(fallback_profile)
+                    break
+                except WebDriverException as fallback_exc:
+                    last_exc = fallback_exc
+                    continue
+            else:
+                raise last_exc
 
         self._driver.implicitly_wait(3)
         self._wait = WebDriverWait(self._driver, 25)
@@ -162,7 +190,7 @@ class TwitterScraper:
         logger.info(
             "Twitter Edge 已启动（无头: %s，profile: %s）",
             self.headless,
-            profile_path,
+            self._active_profile_dir or profile_path,
         )
 
     # ------------------------------------------------------------------ #
@@ -202,7 +230,8 @@ class TwitterScraper:
 
     def _has_valid_session(self) -> bool:
         """检查配置文件中是否有有效的登录 cookies。"""
-        cookies_file = os.path.join(self.session_profile_dir, "Default", "Cookies")
+        profile_dir = self._active_profile_dir or self.session_profile_dir
+        cookies_file = os.path.join(profile_dir, "Default", "Cookies")
         if os.path.exists(cookies_file):
             try:
                 # 如果 cookies 文件存在且最近有修改，认为有有效会话
@@ -1144,25 +1173,76 @@ class TwitterScraper:
 
     @staticmethod
     def _parse_count_text(text: str) -> int:
-        """解析 Twitter 风格的数字，如 '1.2K'、'56.8M'。"""
-        text = (text or "").strip().replace(",", "").replace("\u00a0", "").replace(" ", "")
-        if not text:
+        """解析 Twitter/X 计数文本，兼容 K/M/B 以及 万/亿 等格式。"""
+        raw = (text or "").strip().replace("\u00a0", " ").replace("\u202f", " ")
+        if not raw:
             return 0
-        multiplier = 1
-        upper = text.upper()
-        if upper.endswith("K"):
-            multiplier = 1_000
-            text = text[:-1]
-        elif upper.endswith("M"):
-            multiplier = 1_000_000
-            text = text[:-1]
-        elif upper.endswith("B"):
-            multiplier = 1_000_000_000
-            text = text[:-1]
+
+        # 先尝试抓取“数字 + 单位”，例如："12.3K Followers"、"1.2万位追踪者"
+        m = re.search(r"(\d+(?:[\.,]\d+)?)\s*([kKmMbB万亿])", raw)
+        if m:
+            num_str = m.group(1).replace(",", ".")
+            unit = m.group(2).upper()
+            mul = 1
+            if unit == "K":
+                mul = 1_000
+            elif unit == "M":
+                mul = 1_000_000
+            elif unit == "B":
+                mul = 1_000_000_000
+            elif unit == "万":
+                mul = 10_000
+            elif unit == "亿":
+                mul = 100_000_000
+            try:
+                return int(float(num_str) * mul)
+            except (ValueError, TypeError):
+                pass
+
+        # 再尝试纯数字（带千分位），例如："12,345" / "12 345 Followers"
+        digits = re.findall(r"\d+", raw)
+        if digits:
+            try:
+                return int("".join(digits))
+            except (ValueError, TypeError):
+                return 0
+        return 0
+
+    def _extract_count_from_link(self, link) -> int:
+        """从 followers/following 链接中尽可能提取计数。"""
+        candidates = []
+
+        # 链接整体文本
+        link_text = (link.text or "").strip()
+        if link_text:
+            candidates.append(link_text)
+
+        # 常见属性
+        for attr in ("aria-label", "title"):
+            v = (link.get_attribute(attr) or "").strip()
+            if v:
+                candidates.append(v)
+
+        # 子节点文本
         try:
-            return int(float(text) * multiplier)
-        except (ValueError, TypeError):
-            return 0
+            spans = link.find_elements(By.TAG_NAME, "span")
+            for span in spans:
+                t = (span.text or "").strip()
+                if t:
+                    candidates.append(t)
+                for attr in ("aria-label", "title"):
+                    v = (span.get_attribute(attr) or "").strip()
+                    if v:
+                        candidates.append(v)
+        except Exception:
+            pass
+
+        best = 0
+        for c in candidates:
+            val = self._parse_count_text(c)
+            if val > best:
+                best = val
+        return best
 
     def get_account_stats(self, handle: str) -> dict:
         """获取账户的粉丝数（followers）和关注数（following）。"""
@@ -1174,21 +1254,14 @@ class TwitterScraper:
             try:
                 links = self._driver.find_elements(
                     By.CSS_SELECTOR,
-                    'a[href$="/followers"], a[href$="/following"]',
+                    'a[href$="/followers"], a[href$="/verified_followers"], a[href$="/following"]',
                 )
                 for link in links:
                     href = (link.get_attribute("href") or "").rstrip("/")
-                    spans = link.find_elements(By.TAG_NAME, "span")
-                    count_text = ""
-                    for span in spans:
-                        t = (span.text or "").strip()
-                        if t and any(c.isdigit() for c in t):
-                            count_text = t
-                            break
-                    count = self._parse_count_text(count_text)
-                    if href.endswith("/followers"):
+                    count = self._extract_count_from_link(link)
+                    if "/verified_followers" in href or href.endswith("/followers"):
                         stats["follower_count"] = count
-                    elif href.endswith("/following"):
+                    elif "/following" in href:
                         stats["following_count"] = count
             except Exception as exc:
                 logger.debug("解析账户统计信息失败: %s", exc)
@@ -1300,4 +1373,11 @@ class TwitterScraper:
                 pass
             self._driver = None
             self._primary_window_handle = None
+        if self._temporary_profile_dir:
+            try:
+                shutil.rmtree(self._temporary_profile_dir, ignore_errors=True)
+            except Exception:
+                pass
+            self._temporary_profile_dir = None
+        self._active_profile_dir = None
         logger.info("Twitter 浏览器已关闭")

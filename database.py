@@ -380,11 +380,17 @@ def replace_twitter_followings(publisher_id: int, followings: List[dict]) -> Non
         conn.execute(
             "DELETE FROM twitter_followings WHERE publisher_id=?", (publisher_id,)
         )
+        rows = []
+        for f in followings:
+            handle = str(f.get("handle", "")).strip().lstrip("@").lower()
+            if not handle:
+                continue
+            rows.append((publisher_id, handle, f.get("name", "")))
         conn.executemany(
             """INSERT OR IGNORE INTO twitter_followings
                (publisher_id, following_handle, following_name)
                VALUES (?, ?, ?)""",
-            [(publisher_id, f["handle"], f.get("name", "")) for f in followings],
+            rows,
         )
 
 
@@ -396,16 +402,16 @@ def get_common_followings_for_publishers(publisher_ids: List[int]) -> List[Dict]
     with _db() as conn:
         rows = conn.execute(
             f"""SELECT
-                    tf.following_handle,
+                    LOWER(tf.following_handle) AS following_handle,
                     MAX(tf.following_name) AS following_name,
                     COUNT(DISTINCT tf.publisher_id) AS followed_by_count,
                     GROUP_CONCAT(DISTINCT p.handle) AS followed_by_handles
                 FROM twitter_followings tf
                 JOIN publishers p ON p.id = tf.publisher_id
                 WHERE tf.publisher_id IN ({placeholders})
-                GROUP BY tf.following_handle
+                GROUP BY LOWER(tf.following_handle)
                 HAVING COUNT(DISTINCT tf.publisher_id) = ?
-                ORDER BY tf.following_handle""",
+                ORDER BY LOWER(tf.following_handle)""",
             publisher_ids + [len(publisher_ids)],
         ).fetchall()
         return [dict(r) for r in rows]
@@ -489,6 +495,7 @@ def get_all_stocks_for_publishers(publisher_ids: List[int]) -> List[Dict]:
             FROM stock_mentions sm
             JOIN publishers p ON p.id = sm.publisher_id
             WHERE sm.publisher_id IN ({placeholders})
+            GROUP BY sm.ticker, p.id, p.handle, p.name
             ORDER BY sm.ticker, p.handle
         """, publisher_ids).fetchall()
         return [dict(r) for r in rows]

@@ -300,7 +300,7 @@ class TwitterRunner:
         with self._sync_lock:
             return dict(self._sync_status.get(publisher_id, {"state": "idle"}))
 
-    def start_following_sync(self, publisher_id: int, handle: str, min_followers: int = 20000) -> bool:
+    def start_following_sync(self, publisher_id: int, handle: str, min_followers: int = 10000) -> bool:
         """在后台线程中启动关注列表同步，返回是否成功启动（已在同步中返回 False）。"""
         with self._sync_lock:
             existing = self._sync_status.get(publisher_id, {})

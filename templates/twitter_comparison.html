@@ -108,7 +108,7 @@
                 <div class="text-muted small" id="sync-status-{{ acc.id }}">—</div>
               </div>
               <button class="btn btn-xs btn-outline-secondary ms-1"
-                      title="同步关注列表（粉丝数 ≥ 20,000 才会抓取）"
+                      title="同步关注列表（粉丝数 ≥ 10,000 才会抓取）"
                       onclick="syncFollowing({{ acc.id }}, '{{ acc.handle }}')">
                 <i class="bi bi-arrow-repeat"></i>
               </button>
@@ -169,7 +169,7 @@
       <div class="card shadow-sm mb-4" id="no-following-data-card" style="display: none;">
         <div class="card-body text-muted small">
           <i class="bi bi-info-circle me-2"></i>
-          尚未同步关注列表数据，点击账户旁边的 <i class="bi bi-arrow-repeat"></i> 按钮触发同步（粉丝数 ≥ 20,000 才会抓取）。
+          尚未同步关注列表数据，点击账户旁边的 <i class="bi bi-arrow-repeat"></i> 按钮触发同步（粉丝数 ≥ 10,000 才会抓取）。
         </div>
       </div>
 
@@ -401,8 +401,8 @@
           el.innerHTML = '<span class="text-success">已同步 ' + s.synced_following_count + ' 人</span>';
         } else if (s.follower_count !== null && s.follower_count !== undefined) {
           const fc = s.follower_count || 0;
-          el.innerHTML = fc < 20000
-            ? '<span class="text-muted">粉丝 ' + fc.toLocaleString() + '（不满 2 万）</span>'
+          el.innerHTML = fc < 10000
+            ? '<span class="text-muted">粉丝 ' + fc.toLocaleString() + '（不满 1 万）</span>'
             : '<span class="text-warning">粉丝 ' + fc.toLocaleString() + '，未同步</span>';
         } else {
           el.textContent = '未同步';

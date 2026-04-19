@@ -426,7 +426,7 @@ def api_twitter_sync_following(pub_id: int):
     if not pub or pub["platform"] != "twitter":
         return jsonify({"ok": False, "error": "账户不存在"}), 404
 
-    started = twitter_tracker.start_following_sync(pub_id, pub["handle"], min_followers=20000)
+    started = twitter_tracker.start_following_sync(pub_id, pub["handle"], min_followers=10000)
     if not started:
         return jsonify({"ok": False, "error": f"@{pub['handle']} 正在同步中，请稍候"}), 409
     return jsonify({"ok": True, "message": f"@{pub['handle']} 关注列表同步已启动"})
